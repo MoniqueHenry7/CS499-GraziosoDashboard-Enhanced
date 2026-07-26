@@ -17,17 +17,26 @@ class RescueRecommendationEngine:
     def __init__(
         self,
         records: list[dict[str, Any]],
-        rescue_profiles: dict[str, dict[str, Any]],
+        rescue_profiles: dict[str, Any],
     ) -> None:
         """Initialize the recommendation engine.
 
         Args:
-            records: Animal records retrieved from the database.
-            rescue_profiles: Rescue categories and their preferred
-                animal characteristics.
+            records:
+                Animal records retrieved from the database.
+
+            rescue_profiles:
+                Rescue categories and their preferred animal
+                characteristics. Profiles may be dictionaries or
+                RescueProfile dataclass objects.
         """
 
-        self.rescue_profiles = rescue_profiles
+        # Normalize dictionary-based test profiles and RescueProfile
+        # dataclass objects into one internal dictionary structure.
+        self.rescue_profiles: dict[str, dict[str, Any]] = {
+            rescue_type: self._normalize_profile(profile)
+            for rescue_type, profile in rescue_profiles.items()
+        }
 
         # Main dictionary:
         # unique internal record key -> complete animal record
@@ -64,7 +73,8 @@ class RescueRecommendationEngine:
         and trailing spaces, and replaces repeated spaces with one space.
 
         Args:
-            value: A value that may contain text.
+            value:
+                A value that may contain text.
 
         Returns:
             A normalized string.
@@ -79,7 +89,8 @@ class RescueRecommendationEngine:
         """Convert a value to a floating-point number safely.
 
         Args:
-            value: A possible numeric value.
+            value:
+                A possible numeric value.
 
         Returns:
             The converted number, or None when conversion is not possible.
@@ -89,6 +100,114 @@ class RescueRecommendationEngine:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalize_profile(
+        profile: Any,
+    ) -> dict[str, Any]:
+        """Convert a dictionary or RescueProfile object to one format.
+
+        The recommendation tests use dictionary-based rescue profiles,
+        while the dashboard's rescue_rules.py module uses frozen
+        RescueProfile dataclass objects. This method supports both
+        representations.
+
+        Args:
+            profile:
+                A dictionary or RescueProfile-compatible object.
+
+        Returns:
+            A dictionary containing the normalized profile fields.
+
+        Raises:
+            ValueError:
+                If the profile does not contain valid minimum and
+                maximum age values.
+        """
+
+        if isinstance(profile, dict):
+            breeds = profile.get(
+                "breeds",
+                profile.get(
+                    "preferred_breeds",
+                    (),
+                ),
+            )
+
+            minimum_age = profile.get(
+                "minimum_age_weeks",
+                profile.get(
+                    "min_age_weeks",
+                ),
+            )
+
+            maximum_age = profile.get(
+                "maximum_age_weeks",
+                profile.get(
+                    "max_age_weeks",
+                ),
+            )
+
+            preferred_sex = profile.get(
+                "preferred_sex"
+            )
+
+            preferred_outcome = profile.get(
+                "preferred_outcome"
+            )
+
+        else:
+            breeds = getattr(
+                profile,
+                "preferred_breeds",
+                (),
+            )
+
+            minimum_age = getattr(
+                profile,
+                "min_age_weeks",
+                None,
+            )
+
+            maximum_age = getattr(
+                profile,
+                "max_age_weeks",
+                None,
+            )
+
+            preferred_sex = getattr(
+                profile,
+                "preferred_sex",
+                None,
+            )
+
+            preferred_outcome = getattr(
+                profile,
+                "preferred_outcome",
+                None,
+            )
+
+        if minimum_age is None or maximum_age is None:
+            raise ValueError(
+                "Rescue profile must define minimum "
+                "and maximum ages."
+            )
+
+        return {
+            "breeds": tuple(breeds),
+            "minimum_age_weeks": float(
+                minimum_age
+            ),
+            "maximum_age_weeks": float(
+                maximum_age
+            ),
+            "preferred_sex": str(
+                preferred_sex or ""
+            ),
+            "preferred_outcome": str(
+                preferred_outcome or ""
+            ),
+        }
 
     # ------------------------------------------------------------------
     # Index construction
@@ -108,13 +227,17 @@ class RescueRecommendationEngine:
         can later be located with binary search.
 
         Args:
-            records: Animal records to index.
+            records:
+                Animal records to index.
         """
 
         known_breeds = {
             self._normalize(breed)
             for profile in self.rescue_profiles.values()
-            for breed in profile.get("breeds", ())
+            for breed in profile.get(
+                "breeds",
+                (),
+            )
         }
 
         for position, original_record in enumerate(records):
@@ -122,7 +245,10 @@ class RescueRecommendationEngine:
             record = dict(original_record)
 
             animal_id = str(
-                record.get("animal_id", "unknown")
+                record.get(
+                    "animal_id",
+                    "unknown",
+                )
             )
 
             mongo_id = record.get("_id")
@@ -132,7 +258,9 @@ class RescueRecommendationEngine:
             if mongo_id is not None:
                 record_key = str(mongo_id)
             else:
-                record_key = f"{animal_id}:{position}"
+                record_key = (
+                    f"{animal_id}:{position}"
+                )
 
             record["record_key"] = record_key
             self.records[record_key] = record
@@ -142,7 +270,9 @@ class RescueRecommendationEngine:
             )
 
             sex = self._normalize(
-                record.get("sex_upon_outcome")
+                record.get(
+                    "sex_upon_outcome"
+                )
             )
 
             outcome = self._normalize(
@@ -159,13 +289,18 @@ class RescueRecommendationEngine:
             # "Labrador Retriever Mix." Substring matching allows the
             # profile breed to match the complete database description.
             for breed_term in known_breeds:
-                if breed_term and breed_term in breed_text:
+                if (
+                    breed_term
+                    and breed_term in breed_text
+                ):
                     self.breed_index[
                         breed_term
                     ].add(record_key)
 
             if sex:
-                self.sex_index[sex].add(record_key)
+                self.sex_index[
+                    sex
+                ].add(record_key)
 
             if outcome:
                 self.outcome_index[
@@ -174,7 +309,10 @@ class RescueRecommendationEngine:
 
             if age is not None:
                 self.sorted_age_records.append(
-                    (age, record_key)
+                    (
+                        age,
+                        record_key,
+                    )
                 )
 
         # Sorting occurs once during engine initialization.
@@ -206,8 +344,11 @@ class RescueRecommendationEngine:
         requested range in the sorted age list.
 
         Args:
-            minimum_age: Inclusive minimum age in weeks.
-            maximum_age: Inclusive maximum age in weeks.
+            minimum_age:
+                Inclusive minimum age in weeks.
+
+            maximum_age:
+                Inclusive maximum age in weeks.
 
         Returns:
             A set of matching record keys.
@@ -243,7 +384,8 @@ class RescueRecommendationEngine:
         Set union combines the record keys for every acceptable breed.
 
         Args:
-            preferred_breeds: Breed names accepted by a rescue profile.
+            preferred_breeds:
+                Breed names accepted by a rescue profile.
 
         Returns:
             A set containing all matching record keys.
@@ -252,7 +394,9 @@ class RescueRecommendationEngine:
         matching_ids: set[str] = set()
 
         for breed in preferred_breeds:
-            breed_key = self._normalize(breed)
+            breed_key = self._normalize(
+                breed
+            )
 
             matching_ids.update(
                 self.breed_index.get(
@@ -279,23 +423,35 @@ class RescueRecommendationEngine:
         the scoring algorithm determines the strongest partial matches.
 
         Args:
-            profile: Rescue requirements and preferred characteristics.
-            requested_count: Number of recommendations requested.
+            profile:
+                Rescue requirements and preferred characteristics.
+
+            requested_count:
+                Number of recommendations requested.
 
         Returns:
             A set of candidate record keys.
         """
 
         breed_ids = self._find_breed_ids(
-            tuple(profile.get("breeds", ()))
+            tuple(
+                profile.get(
+                    "breeds",
+                    (),
+                )
+            )
         )
 
         preferred_sex = self._normalize(
-            profile.get("preferred_sex")
+            profile.get(
+                "preferred_sex"
+            )
         )
 
         preferred_outcome = self._normalize(
-            profile.get("preferred_outcome")
+            profile.get(
+                "preferred_outcome"
+            )
         )
 
         sex_ids = self.sex_index.get(
@@ -309,8 +465,12 @@ class RescueRecommendationEngine:
         )
 
         age_ids = self._find_age_ids(
-            profile["minimum_age_weeks"],
-            profile["maximum_age_weeks"],
+            profile[
+                "minimum_age_weeks"
+            ],
+            profile[
+                "maximum_age_weeks"
+            ],
         )
 
         # Intersection retains only animals appearing in every set.
@@ -342,7 +502,9 @@ class RescueRecommendationEngine:
 
         # Final fallback prevents an empty application result when no
         # indexed characteristics match the requested profile.
-        return set(self.records.keys())
+        return set(
+            self.records.keys()
+        )
 
     # ------------------------------------------------------------------
     # Weighted scoring algorithm
@@ -363,8 +525,11 @@ class RescueRecommendationEngine:
         - Preferred outcome: 15 points
 
         Args:
-            record: One animal record.
-            profile: Requirements for the selected rescue category.
+            record:
+                One animal record.
+
+            profile:
+                Requirements for the selected rescue category.
 
         Returns:
             A tuple containing the score and a list of match reasons.
@@ -378,7 +543,9 @@ class RescueRecommendationEngine:
         )
 
         sex = self._normalize(
-            record.get("sex_upon_outcome")
+            record.get(
+                "sex_upon_outcome"
+            )
         )
 
         outcome = self._normalize(
@@ -393,7 +560,10 @@ class RescueRecommendationEngine:
 
         preferred_breeds = [
             self._normalize(breed)
-            for breed in profile.get("breeds", ())
+            for breed in profile.get(
+                "breeds",
+                (),
+            )
         ]
 
         # Breed match: 40 points
@@ -403,22 +573,31 @@ class RescueRecommendationEngine:
             for breed in preferred_breeds
         ):
             score += 40
+
             reasons.append(
                 "Preferred rescue breed"
             )
 
         # Sex match: 20 points
         if sex == self._normalize(
-            profile.get("preferred_sex")
+            profile.get(
+                "preferred_sex"
+            )
         ):
             score += 20
-            reasons.append("Preferred sex")
+
+            reasons.append(
+                "Preferred sex"
+            )
 
         # Outcome match: 15 points
         if outcome == self._normalize(
-            profile.get("preferred_outcome")
+            profile.get(
+                "preferred_outcome"
+            )
         ):
             score += 15
+
             reasons.append(
                 "Preferred outcome type"
             )
@@ -435,6 +614,7 @@ class RescueRecommendationEngine:
 
             if minimum_age <= age <= maximum_age:
                 score += 25
+
                 reasons.append(
                     "Age within preferred range"
                 )
@@ -443,8 +623,14 @@ class RescueRecommendationEngine:
                 # Partial credit is awarded when the age is reasonably
                 # close to the preferred range.
                 distance_from_range = min(
-                    abs(age - minimum_age),
-                    abs(age - maximum_age),
+                    abs(
+                        age
+                        - minimum_age
+                    ),
+                    abs(
+                        age
+                        - maximum_age
+                    ),
                 )
 
                 partial_age_score = max(
@@ -463,7 +649,10 @@ class RescueRecommendationEngine:
                         "Age near preferred range"
                     )
 
-        return round(score, 2), reasons
+        return (
+            round(score, 2),
+            reasons,
+        )
 
     # ------------------------------------------------------------------
     # Bounded min-heap ranking
@@ -482,30 +671,44 @@ class RescueRecommendationEngine:
         retained. A stronger candidate replaces that root.
 
         Args:
-            candidate_ids: Candidate record keys.
-            profile: Requirements for the selected rescue category.
-            limit: Maximum number of results to return.
+            candidate_ids:
+                Candidate record keys.
+
+            profile:
+                Requirements for the selected rescue category.
+
+            limit:
+                Maximum number of results to return.
 
         Returns:
             Ranked recommendation records.
         """
 
-        heap: list[tuple[float, str]] = []
+        heap: list[
+            tuple[float, str]
+        ] = []
 
         score_details: dict[
             str,
-            tuple[float, list[str]],
+            tuple[
+                float,
+                list[str],
+            ],
         ] = {}
 
         for record_key in candidate_ids:
-            record = self.records[record_key]
+            record = self.records[
+                record_key
+            ]
 
             score, reasons = self._calculate_score(
                 record=record,
                 profile=profile,
             )
 
-            score_details[record_key] = (
+            score_details[
+                record_key
+            ] = (
                 score,
                 reasons,
             )
@@ -517,7 +720,10 @@ class RescueRecommendationEngine:
             )
 
             if len(heap) < limit:
-                heappush(heap, heap_entry)
+                heappush(
+                    heap,
+                    heap_entry,
+                )
 
             elif heap_entry > heap[0]:
                 heapreplace(
@@ -547,7 +753,9 @@ class RescueRecommendationEngine:
             start=1,
         ):
             record = dict(
-                self.records[record_key]
+                self.records[
+                    record_key
+                ]
             )
 
             _, reasons = score_details[
@@ -558,13 +766,17 @@ class RescueRecommendationEngine:
                 "recommendation_rank"
             ] = rank
 
-            record["match_score"] = score
+            record[
+                "match_score"
+            ] = score
 
-            record["match_reasons"] = ", ".join(
-                reasons
+            record[
+                "match_reasons"
+            ] = ", ".join(reasons)
+
+            recommendations.append(
+                record
             )
-
-            recommendations.append(record)
 
         return recommendations
 
@@ -580,25 +792,34 @@ class RescueRecommendationEngine:
         """Return ranked recommendations for a rescue category.
 
         Args:
-            rescue_type: Name of a rescue profile.
-            limit: Maximum number of recommendations to return.
+            rescue_type:
+                Name of a rescue profile.
+
+            limit:
+                Maximum number of recommendations to return.
 
         Returns:
             Ranked recommendation records.
 
         Raises:
-            ValueError: If the rescue profile is unknown or the limit is
-                not positive.
+            ValueError:
+                If the rescue profile is unknown or the limit is not
+                a positive integer.
         """
 
         if rescue_type not in self.rescue_profiles:
             raise ValueError(
-                f"Unknown rescue profile: {rescue_type}"
+                f"Unknown rescue profile: "
+                f"{rescue_type}"
             )
 
-        if not isinstance(limit, int) or limit <= 0:
+        if (
+            not isinstance(limit, int)
+            or limit <= 0
+        ):
             raise ValueError(
-                "Recommendation limit must be positive."
+                "Recommendation limit must "
+                "be positive."
             )
 
         cache_key = (
