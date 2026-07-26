@@ -1,0 +1,8 @@
+dash>=2.18
+dash-leaflet>=1.0
+pandas>=2.0
+plotly>=5.0
+pymongo>=4.0
+pytest>=8.0
+jupyter>=1.0
+ipykernel>=6.0

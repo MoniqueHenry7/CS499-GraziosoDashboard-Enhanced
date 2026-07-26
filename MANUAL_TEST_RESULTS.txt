@@ -1,0 +1,25 @@
+CS 499 Enhancement One
+Manual Application Verification
+
+Student: Monique Henry
+Artifact: Grazioso Salvare Rescue Match Recommendation Dashboard
+
+Verified:
+
+[PASS] Application launches successfully with local MongoDB.
+[PASS] Reset / Show All Dogs displays dog records.
+[PASS] Breed distribution visualization displays in Reset mode.
+[PASS] Water Rescue recommendation mode works.
+[PASS] Mountain or Wilderness Rescue recommendation mode works.
+[PASS] Disaster Rescue or Individual Tracking recommendation mode works.
+[PASS] Recommendation scores and match levels display correctly.
+[PASS] Top Recommendation updates based on selected rescue profile.
+[PASS] Recommendation explanations display.
+[PASS] Breed filter works.
+[PASS] Outcome filter works.
+[PASS] Age-range filter works.
+[PASS] Combined filtering works.
+[PASS] DataTable sorting and filtering work.
+[PASS] Selected-animal map updates correctly.
+[PASS] Dashboard remains usable when browser width changes.
+[PASS] No unhandled application errors observed during manual verification.
