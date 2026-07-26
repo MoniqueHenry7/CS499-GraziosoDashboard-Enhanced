@@ -1,501 +1,486 @@
-"""Unit tests for the rescue recommendation engine.
+"""Tests for the Enhancement Two rescue recommendation engine.
 
-These tests use controlled sample records and do not require MongoDB,
-Dash, or the full animal shelter dataset.
+The suite verifies profile compatibility, index construction, binary-search
+age lookups, set-based candidate selection, weighted scoring, bounded
+min-heap ranking, validation, caching, and protection of source records.
 """
+
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 from recommendation import RescueRecommendationEngine
+from rescue_rules import RESCUE_PROFILES
 
 
-# ---------------------------------------------------------------------------
-# Controlled rescue profiles used only for unit testing
-# ---------------------------------------------------------------------------
-
-SAMPLE_PROFILES = {
+TEST_PROFILES: dict[str, dict[str, Any]] = {
     "Water Rescue": {
         "breeds": (
             "Labrador Retriever",
             "Chesapeake Bay Retriever",
             "Newfoundland",
         ),
+        "minimum_age_weeks": 26,
+        "maximum_age_weeks": 156,
         "preferred_sex": "Intact Female",
-        "minimum_age_weeks": 26,
-        "maximum_age_weeks": 156,
         "preferred_outcome": "Transfer",
     },
-
-    "Mountain or Wilderness Rescue": {
+    "Tracking": {
         "breeds": (
             "German Shepherd",
-            "Alaskan Malamute",
-            "Old English Sheepdog",
-            "Siberian Husky",
-            "Rottweiler",
-        ),
-        "preferred_sex": "Intact Male",
-        "minimum_age_weeks": 26,
-        "maximum_age_weeks": 156,
-        "preferred_outcome": "Transfer",
-    },
-
-    "Disaster or Individual Tracking": {
-        "breeds": (
-            "Doberman Pinscher",
-            "German Shepherd",
-            "Golden Retriever",
             "Bloodhound",
-            "Rottweiler",
         ),
-        "preferred_sex": "Intact Male",
         "minimum_age_weeks": 20,
         "maximum_age_weeks": 300,
+        "preferred_sex": "Intact Male",
         "preferred_outcome": "Transfer",
     },
 }
 
 
-# ---------------------------------------------------------------------------
-# Controlled animal records used for testing
-# ---------------------------------------------------------------------------
-
-SAMPLE_RECORDS = [
-    {
-        "animal_id": "A1",
-        "name": "Max",
-        "breed": "Labrador Retriever Mix",
-        "sex_upon_outcome": "Intact Female",
-        "age_upon_outcome_in_weeks": 52,
-        "outcome_type": "Transfer",
-    },
-    {
-        "animal_id": "A2",
-        "name": "Luna",
-        "breed": "Newfoundland Mix",
-        "sex_upon_outcome": "Spayed Female",
-        "age_upon_outcome_in_weeks": 60,
-        "outcome_type": "Transfer",
-    },
-    {
-        "animal_id": "A3",
-        "name": "Rocky",
-        "breed": "Chihuahua Shorthair Mix",
-        "sex_upon_outcome": "Intact Male",
-        "age_upon_outcome_in_weeks": 400,
-        "outcome_type": "Adoption",
-    },
-    {
-        "animal_id": "A4",
-        "name": "Scout",
-        "breed": "German Shepherd Mix",
-        "sex_upon_outcome": "Intact Male",
-        "age_upon_outcome_in_weeks": 75,
-        "outcome_type": "Transfer",
-    },
-    {
-        "animal_id": "A5",
-        "name": "Unknown",
-        "breed": "Labrador Retriever Mix",
-        "sex_upon_outcome": None,
-        "age_upon_outcome_in_weeks": None,
-        "outcome_type": "Transfer",
-    },
-]
-
-
-# ---------------------------------------------------------------------------
-# Pytest fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
-def sample_records():
-    """Return fresh copies of the sample animal records."""
+def animal_records() -> list[dict[str, Any]]:
+    """Provide varied animal records for indexing and ranking tests."""
 
     return [
-        dict(record)
-        for record in SAMPLE_RECORDS
+        {
+            "animal_id": "A1",
+            "name": "Aqua",
+            "breed": "Labrador Retriever Mix",
+            "sex_upon_outcome": "Intact Female",
+            "age_upon_outcome_in_weeks": 52,
+            "outcome_type": "Transfer",
+        },
+        {
+            "animal_id": "A2",
+            "name": "Bay",
+            "breed": "Chesapeake Bay Retriever",
+            "sex_upon_outcome": "Intact Male",
+            "age_upon_outcome_in_weeks": 60,
+            "outcome_type": "Transfer",
+        },
+        {
+            "animal_id": "A3",
+            "name": "Cedar",
+            "breed": "Poodle Mix",
+            "sex_upon_outcome": "Intact Female",
+            "age_upon_outcome_in_weeks": 70,
+            "outcome_type": "Transfer",
+        },
+        {
+            "animal_id": "A4",
+            "name": "Delta",
+            "breed": "Poodle",
+            "sex_upon_outcome": "Neutered Male",
+            "age_upon_outcome_in_weeks": 500,
+            "outcome_type": "Adoption",
+        },
+        {
+            "animal_id": "A5",
+            "name": "Echo",
+            "breed": "Newfoundland",
+            "sex_upon_outcome": "Intact Female",
+            "age_upon_outcome_in_weeks": 80,
+            "outcome_type": "Adoption",
+        },
+        {
+            "animal_id": "A6",
+            "name": "Finder",
+            "breed": "German Shepherd Mix",
+            "sex_upon_outcome": "Intact Male",
+            "age_upon_outcome_in_weeks": "100",
+            "outcome_type": "Transfer",
+        },
+        {
+            "animal_id": "A7",
+            "name": "Unknown Age",
+            "breed": "Bloodhound",
+            "sex_upon_outcome": "Intact Male",
+            "age_upon_outcome_in_weeks": "not available",
+            "outcome_type": "Transfer",
+        },
     ]
 
 
 @pytest.fixture
-def sample_profiles():
-    """Return the controlled rescue profiles."""
-
-    return SAMPLE_PROFILES
-
-
-@pytest.fixture
-def engine(sample_records, sample_profiles):
-    """Create a recommendation engine for each test."""
+def engine(
+    animal_records: list[dict[str, Any]],
+) -> RescueRecommendationEngine:
+    """Create an engine using dictionary-based profiles."""
 
     return RescueRecommendationEngine(
-        records=sample_records,
-        rescue_profiles=sample_profiles,
+        records=animal_records,
+        rescue_profiles=TEST_PROFILES,
     )
 
 
-# ---------------------------------------------------------------------------
-# Helper function
-# ---------------------------------------------------------------------------
-
-def animal_ids_from_keys(engine, record_keys):
-    """Convert internal record keys into animal IDs."""
-
-    return {
-        engine.records[record_key]["animal_id"]
-        for record_key in record_keys
-    }
+def test_normalize_trims_case_and_repeated_spaces() -> None:
+    assert (
+        RescueRecommendationEngine._normalize(
+            "  Labrador   Retriever MIX  "
+        )
+        == "labrador retriever mix"
+    )
 
 
-# ---------------------------------------------------------------------------
-# Dictionary and index construction tests
-# ---------------------------------------------------------------------------
-
-def test_engine_builds_complete_record_index(engine):
-    """Every input record should be stored in the main dictionary."""
-
-    assert len(engine.records) == len(SAMPLE_RECORDS)
+def test_normalize_none_returns_empty_string() -> None:
+    assert RescueRecommendationEngine._normalize(None) == ""
 
 
-def test_record_keys_are_unique(engine):
-    """Each record should receive a unique internal key."""
-
-    record_keys = list(engine.records.keys())
-
-    assert len(record_keys) == len(set(record_keys))
+def test_safe_number_converts_numeric_string() -> None:
+    assert RescueRecommendationEngine._safe_number("52.5") == 52.5
 
 
-def test_engine_builds_labrador_breed_index(engine):
-    """The breed dictionary should contain both Labrador records."""
+def test_safe_number_returns_none_for_invalid_value() -> None:
+    assert RescueRecommendationEngine._safe_number("unknown") is None
 
-    labrador_keys = engine.breed_index[
-        "labrador retriever"
+
+def test_normalize_profile_accepts_standard_dictionary() -> None:
+    profile = RescueRecommendationEngine._normalize_profile(
+        TEST_PROFILES["Water Rescue"]
+    )
+
+    assert profile["breeds"][0] == "Labrador Retriever"
+    assert profile["minimum_age_weeks"] == 26.0
+    assert profile["maximum_age_weeks"] == 156.0
+
+
+def test_normalize_profile_accepts_alternate_dictionary_keys() -> None:
+    profile = RescueRecommendationEngine._normalize_profile(
+        {
+            "preferred_breeds": ("Bloodhound",),
+            "min_age_weeks": 20,
+            "max_age_weeks": 300,
+            "preferred_sex": "Intact Male",
+            "preferred_outcome": "Transfer",
+        }
+    )
+
+    assert profile["breeds"] == ("Bloodhound",)
+    assert profile["minimum_age_weeks"] == 20.0
+    assert profile["maximum_age_weeks"] == 300.0
+
+
+def test_normalize_profile_accepts_dataclass_object() -> None:
+    @dataclass(frozen=True)
+    class Profile:
+        preferred_breeds: tuple[str, ...]
+        min_age_weeks: float
+        max_age_weeks: float
+        preferred_sex: str
+        preferred_outcome: str
+
+    profile = RescueRecommendationEngine._normalize_profile(
+        Profile(
+            preferred_breeds=("Newfoundland",),
+            min_age_weeks=26,
+            max_age_weeks=156,
+            preferred_sex="Intact Female",
+            preferred_outcome="Transfer",
+        )
+    )
+
+    assert profile["breeds"] == ("Newfoundland",)
+    assert profile["preferred_sex"] == "Intact Female"
+
+
+def test_normalize_profile_rejects_missing_age_bounds() -> None:
+    with pytest.raises(
+        ValueError,
+        match="minimum and maximum ages",
+    ):
+        RescueRecommendationEngine._normalize_profile(
+            {
+                "breeds": ("Labrador Retriever",),
+                "preferred_sex": "Intact Female",
+                "preferred_outcome": "Transfer",
+            }
+        )
+
+
+def test_index_building_does_not_modify_source_records(
+    animal_records: list[dict[str, Any]],
+) -> None:
+    RescueRecommendationEngine(
+        records=animal_records,
+        rescue_profiles=TEST_PROFILES,
+    )
+
+    assert all(
+        "record_key" not in record
+        for record in animal_records
+    )
+
+
+def test_index_uses_mongodb_id_as_record_key() -> None:
+    engine = RescueRecommendationEngine(
+        records=[
+            {
+                "_id": "mongo-123",
+                "animal_id": "A1",
+                "breed": "Labrador Retriever",
+                "sex_upon_outcome": "Intact Female",
+                "age_upon_outcome_in_weeks": 50,
+                "outcome_type": "Transfer",
+            }
+        ],
+        rescue_profiles=TEST_PROFILES,
+    )
+
+    assert "mongo-123" in engine.records
+
+
+def test_index_creates_unique_fallback_record_keys() -> None:
+    duplicate_records = [
+        {"animal_id": "A1"},
+        {"animal_id": "A1"},
     ]
 
-    animal_ids = animal_ids_from_keys(
-        engine,
-        labrador_keys,
+    engine = RescueRecommendationEngine(
+        records=duplicate_records,
+        rescue_profiles=TEST_PROFILES,
     )
 
-    assert animal_ids == {"A1", "A5"}
+    assert set(engine.records) == {"A1:0", "A1:1"}
 
 
-def test_engine_builds_newfoundland_breed_index(engine):
-    """The breed index should contain the Newfoundland record."""
+def test_breed_index_matches_mixed_breed_description(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert "A1:0" in engine.breed_index["labrador retriever"]
+    assert "A6:5" in engine.breed_index["german shepherd"]
 
-    newfoundland_keys = engine.breed_index[
-        "newfoundland"
-    ]
 
-    animal_ids = animal_ids_from_keys(
-        engine,
-        newfoundland_keys,
+def test_text_indexes_are_normalized(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert "A1:0" in engine.sex_index["intact female"]
+    assert "A1:0" in engine.outcome_index["transfer"]
+
+
+def test_age_index_is_sorted_and_skips_invalid_ages(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert engine.sorted_age_values == sorted(
+        engine.sorted_age_values
     )
 
-    assert animal_ids == {"A2"}
+    assert len(engine.sorted_age_values) == 6
 
-
-def test_engine_builds_sex_index(engine):
-    """The sex dictionary should index matching animal records."""
-
-    male_keys = engine.sex_index["intact male"]
-
-    animal_ids = animal_ids_from_keys(
-        engine,
-        male_keys,
-    )
-
-    assert animal_ids == {"A3", "A4"}
-
-
-def test_engine_builds_outcome_index(engine):
-    """The outcome dictionary should index transfer records."""
-
-    transfer_keys = engine.outcome_index["transfer"]
-
-    animal_ids = animal_ids_from_keys(
-        engine,
-        transfer_keys,
-    )
-
-    assert animal_ids == {"A1", "A2", "A4", "A5"}
-
-
-def test_engine_sorts_age_values(engine):
-    """Valid age values should be stored in ascending order."""
-
-    assert engine.sorted_age_values == [
-        52.0,
-        60.0,
-        75.0,
-        400.0,
-    ]
-
-
-def test_missing_age_is_not_added_to_sorted_age_index(engine):
-    """Records with missing ages should not break age indexing."""
-
-    indexed_animal_ids = {
-        engine.records[record_key]["animal_id"]
+    assert "A7:6" not in {
+        record_key
         for _, record_key in engine.sorted_age_records
     }
 
-    assert "A5" not in indexed_animal_ids
+
+def test_cache_is_empty_after_initial_index_build(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert engine.cache == {}
 
 
-# ---------------------------------------------------------------------------
-# Normalization and safe-conversion tests
-# ---------------------------------------------------------------------------
+def test_find_age_ids_uses_inclusive_boundaries(
+    engine: RescueRecommendationEngine,
+) -> None:
+    matching_ids = engine._find_age_ids(52, 70)
 
-def test_normalize_removes_extra_spaces_and_case_differences():
-    """Text normalization should produce consistent lookup values."""
-
-    normalized = RescueRecommendationEngine._normalize(
-        "  INTACT    Female  "
-    )
-
-    assert normalized == "intact female"
+    assert matching_ids == {
+        "A1:0",
+        "A2:1",
+        "A3:2",
+    }
 
 
-def test_safe_number_converts_valid_number():
-    """Numeric strings should be converted to floating-point values."""
-
-    result = RescueRecommendationEngine._safe_number("52")
-
-    assert result == 52.0
+def test_find_age_ids_returns_empty_for_reversed_range(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert engine._find_age_ids(100, 20) == set()
 
 
-def test_safe_number_returns_none_for_invalid_value():
-    """Invalid age values should return None instead of crashing."""
-
-    result = RescueRecommendationEngine._safe_number(
-        "unknown"
-    )
-
-    assert result is None
+def test_find_age_ids_returns_empty_when_no_age_matches(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert engine._find_age_ids(1000, 2000) == set()
 
 
-# ---------------------------------------------------------------------------
-# Binary-search tests
-# ---------------------------------------------------------------------------
-
-def test_binary_age_search_returns_matching_records(engine):
-    """Binary search should return animals within the age range."""
-
-    matching_keys = engine._find_age_ids(
-        minimum_age=26,
-        maximum_age=156,
-    )
-
-    animal_ids = animal_ids_from_keys(
-        engine,
-        matching_keys,
-    )
-
-    assert animal_ids == {"A1", "A2", "A4"}
-
-
-def test_binary_age_search_uses_inclusive_boundaries():
-    """Animals exactly on minimum and maximum ages should match."""
-
-    boundary_records = [
-        {
-            "animal_id": "LOW",
-            "breed": "Labrador Retriever",
-            "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 26,
-            "outcome_type": "Transfer",
-        },
-        {
-            "animal_id": "HIGH",
-            "breed": "Labrador Retriever",
-            "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 156,
-            "outcome_type": "Transfer",
-        },
-        {
-            "animal_id": "BELOW",
-            "breed": "Labrador Retriever",
-            "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 25,
-            "outcome_type": "Transfer",
-        },
-        {
-            "animal_id": "ABOVE",
-            "breed": "Labrador Retriever",
-            "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 157,
-            "outcome_type": "Transfer",
-        },
-    ]
-
-    boundary_engine = RescueRecommendationEngine(
-        records=boundary_records,
-        rescue_profiles=SAMPLE_PROFILES,
-    )
-
-    matching_keys = boundary_engine._find_age_ids(
-        minimum_age=26,
-        maximum_age=156,
-    )
-
-    animal_ids = animal_ids_from_keys(
-        boundary_engine,
-        matching_keys,
-    )
-
-    assert animal_ids == {"LOW", "HIGH"}
-
-
-def test_binary_age_search_returns_empty_set_when_no_match(engine):
-    """An unmatched age range should return an empty set."""
-
-    matching_keys = engine._find_age_ids(
-        minimum_age=500,
-        maximum_age=600,
-    )
-
-    assert matching_keys == set()
-
-
-# ---------------------------------------------------------------------------
-# Set-operation and candidate-selection tests
-# ---------------------------------------------------------------------------
-
-def test_breed_lookup_combines_multiple_breed_sets(engine):
-    """Breed lookup should use a set union for acceptable breeds."""
-
-    matching_keys = engine._find_breed_ids(
+def test_find_breed_ids_combines_multiple_breed_sets(
+    engine: RescueRecommendationEngine,
+) -> None:
+    matching_ids = engine._find_breed_ids(
         (
             "Labrador Retriever",
             "Newfoundland",
         )
     )
 
-    animal_ids = animal_ids_from_keys(
-        engine,
-        matching_keys,
-    )
-
-    assert animal_ids == {"A1", "A2", "A5"}
+    assert matching_ids == {
+        "A1:0",
+        "A5:4",
+    }
 
 
-def test_strict_candidate_intersection_finds_perfect_match(engine):
-    """Set intersection should identify the perfect Water Rescue match."""
+def test_find_breed_ids_returns_empty_for_unknown_breed(
+    engine: RescueRecommendationEngine,
+) -> None:
+    assert engine._find_breed_ids(
+        ("Unknown Breed",)
+    ) == set()
 
-    water_profile = SAMPLE_PROFILES["Water Rescue"]
 
-    matching_keys = engine._find_candidates(
-        profile=water_profile,
+def test_find_candidates_returns_strict_intersection_when_sufficient(
+    engine: RescueRecommendationEngine,
+) -> None:
+    profile = engine.rescue_profiles["Water Rescue"]
+
+    assert engine._find_candidates(
+        profile,
         requested_count=1,
+    ) == {"A1:0"}
+
+
+def test_find_candidates_uses_broader_set_and_preserves_outcome(
+    engine: RescueRecommendationEngine,
+) -> None:
+    profile = engine.rescue_profiles["Water Rescue"]
+
+    candidates = engine._find_candidates(
+        profile,
+        requested_count=5,
     )
 
-    animal_ids = animal_ids_from_keys(
-        engine,
-        matching_keys,
+    assert "A1:0" in candidates
+    assert "A2:1" in candidates
+    assert "A3:2" in candidates
+    assert "A5:4" not in candidates
+
+
+def test_find_candidates_falls_back_to_all_records() -> None:
+    profile = {
+        "No Match": {
+            "breeds": ("Nonexistent Breed",),
+            "minimum_age_weeks": 2000,
+            "maximum_age_weeks": 3000,
+            "preferred_sex": "Unknown Sex",
+            "preferred_outcome": "Unknown Outcome",
+        }
+    }
+
+    records = [
+        {
+            "animal_id": "A1",
+            "breed": "Poodle",
+            "sex_upon_outcome": "Neutered Male",
+            "age_upon_outcome_in_weeks": 50,
+            "outcome_type": "Adoption",
+        }
+    ]
+
+    engine = RescueRecommendationEngine(
+        records,
+        profile,
     )
 
-    assert animal_ids == {"A1"}
-
-
-def test_broader_candidate_pool_is_used_when_needed(engine):
-    """The engine should broaden the search when strict matches are limited."""
-
-    water_profile = SAMPLE_PROFILES["Water Rescue"]
-
-    matching_keys = engine._find_candidates(
-        profile=water_profile,
-        requested_count=10,
+    candidates = engine._find_candidates(
+        engine.rescue_profiles["No Match"],
+        requested_count=3,
     )
 
-    animal_ids = animal_ids_from_keys(
-        engine,
-        matching_keys,
+    assert candidates == {"A1:0"}
+
+
+def test_calculate_score_returns_100_for_exact_match(
+    engine: RescueRecommendationEngine,
+) -> None:
+    score, reasons = engine._calculate_score(
+        engine.records["A1:0"],
+        engine.rescue_profiles["Water Rescue"],
     )
 
-    assert "A1" in animal_ids
-    assert "A2" in animal_ids
-    assert "A4" in animal_ids
-    assert "A5" in animal_ids
-
-    # A3 is excluded because its outcome is Adoption.
-    assert "A3" not in animal_ids
+    assert score == 100.0
+    assert len(reasons) == 4
 
 
-# ---------------------------------------------------------------------------
-# Weighted-scoring tests
-# ---------------------------------------------------------------------------
-
-def test_perfect_water_rescue_match_receives_100_points(engine):
-    """A record matching every requirement should receive 100 points."""
-
-    water_profile = SAMPLE_PROFILES["Water Rescue"]
-    perfect_record = SAMPLE_RECORDS[0]
+def test_calculate_score_awards_partial_age_credit(
+    engine: RescueRecommendationEngine,
+) -> None:
+    record = {
+        "breed": "Poodle",
+        "sex_upon_outcome": "Neutered Male",
+        "age_upon_outcome_in_weeks": 166,
+        "outcome_type": "Adoption",
+    }
 
     score, reasons = engine._calculate_score(
-        record=perfect_record,
-        profile=water_profile,
+        record,
+        engine.rescue_profiles["Water Rescue"],
     )
 
-    assert score == 100
-    assert "Preferred rescue breed" in reasons
-    assert "Preferred sex" in reasons
-    assert "Age within preferred range" in reasons
-    assert "Preferred outcome type" in reasons
+    assert score == 22.5
+    assert reasons == ["Age near preferred range"]
 
 
-def test_partial_water_rescue_match_receives_expected_score(engine):
-    """Luna should receive breed, age, and outcome points."""
+def test_calculate_score_handles_missing_age(
+    engine: RescueRecommendationEngine,
+) -> None:
+    score, reasons = engine._calculate_score(
+        engine.records["A7:6"],
+        engine.rescue_profiles["Tracking"],
+    )
 
-    water_profile = SAMPLE_PROFILES["Water Rescue"]
-    partial_record = SAMPLE_RECORDS[1]
+    assert score == 75.0
+    assert "Age within preferred range" not in reasons
+    assert "Age near preferred range" not in reasons
+
+
+def test_calculate_score_returns_zero_when_nothing_matches(
+    engine: RescueRecommendationEngine,
+) -> None:
+    record = {
+        "breed": "Poodle",
+        "sex_upon_outcome": "Neutered Male",
+        "age_upon_outcome_in_weeks": 1000,
+        "outcome_type": "Adoption",
+    }
 
     score, reasons = engine._calculate_score(
-        record=partial_record,
-        profile=water_profile,
+        record,
+        engine.rescue_profiles["Water Rescue"],
     )
 
-    # Breed 40 + age 25 + outcome 15 = 80.
-    assert score == 80
-    assert "Preferred rescue breed" in reasons
-    assert "Age within preferred range" in reasons
-    assert "Preferred outcome type" in reasons
-    assert "Preferred sex" not in reasons
+    assert score == 0.0
+    assert reasons == []
 
 
-def test_missing_values_do_not_crash_scoring(engine):
-    """Missing sex and age values should be handled safely."""
-
-    water_profile = SAMPLE_PROFILES["Water Rescue"]
-    incomplete_record = SAMPLE_RECORDS[4]
-
-    score, reasons = engine._calculate_score(
-        record=incomplete_record,
-        profile=water_profile,
+def test_select_top_candidates_respects_limit(
+    engine: RescueRecommendationEngine,
+) -> None:
+    results = engine._select_top_candidates(
+        candidate_ids=set(engine.records),
+        profile=engine.rescue_profiles["Water Rescue"],
+        limit=2,
     )
 
-    # Breed 40 + outcome 15 = 55.
-    assert score == 55
-    assert "Preferred rescue breed" in reasons
-    assert "Preferred outcome type" in reasons
+    assert len(results) == 2
 
 
-# ---------------------------------------------------------------------------
-# Heap and ranking tests
-# ---------------------------------------------------------------------------
-
-def test_recommendations_are_ranked_highest_to_lowest(engine):
-    """Recommendation scores should be returned in descending order."""
-
-    results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=10,
+def test_select_top_candidates_returns_descending_scores_and_ranks(
+    engine: RescueRecommendationEngine,
+) -> None:
+    results = engine._select_top_candidates(
+        candidate_ids=set(engine.records),
+        profile=engine.rescue_profiles["Water Rescue"],
+        limit=4,
     )
 
     scores = [
-        result["match_score"]
-        for result in results
+        record["match_score"]
+        for record in results
+    ]
+
+    ranks = [
+        record["recommendation_rank"]
+        for record in results
     ]
 
     assert scores == sorted(
@@ -503,209 +488,197 @@ def test_recommendations_are_ranked_highest_to_lowest(engine):
         reverse=True,
     )
 
+    assert ranks == [
+        1,
+        2,
+        3,
+        4,
+    ]
 
-def test_perfect_water_rescue_match_ranks_first(engine):
-    """The perfect Water Rescue candidate should rank first."""
 
-    results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=10,
+def test_select_top_candidates_uses_deterministic_tie_breaker() -> None:
+    records = [
+        {
+            "animal_id": "A",
+            "breed": "Labrador Retriever",
+            "sex_upon_outcome": "Intact Female",
+            "age_upon_outcome_in_weeks": 52,
+            "outcome_type": "Transfer",
+        },
+        {
+            "animal_id": "B",
+            "breed": "Labrador Retriever",
+            "sex_upon_outcome": "Intact Female",
+            "age_upon_outcome_in_weeks": 52,
+            "outcome_type": "Transfer",
+        },
+    ]
+
+    engine = RescueRecommendationEngine(
+        records,
+        TEST_PROFILES,
     )
 
-    assert results[0]["animal_id"] == "A1"
-    assert results[0]["recommendation_rank"] == 1
-    assert results[0]["match_score"] == 100
-
-
-def test_mountain_rescue_match_ranks_first(engine):
-    """The German Shepherd should rank first for mountain rescue."""
-
-    results = engine.recommend(
-        rescue_type="Mountain or Wilderness Rescue",
-        limit=10,
-    )
-
-    assert results[0]["animal_id"] == "A4"
-    assert results[0]["match_score"] == 100
-
-
-def test_disaster_tracking_match_ranks_first(engine):
-    """The German Shepherd should rank first for tracking rescue."""
-
-    results = engine.recommend(
-        rescue_type="Disaster or Individual Tracking",
-        limit=10,
-    )
-
-    assert results[0]["animal_id"] == "A4"
-    assert results[0]["match_score"] == 100
-
-
-def test_heap_respects_requested_limit(engine):
-    """The bounded heap should not return more than the requested limit."""
-
-    results = engine.recommend(
-        rescue_type="Water Rescue",
+    results = engine._select_top_candidates(
+        candidate_ids=set(engine.records),
+        profile=engine.rescue_profiles["Water Rescue"],
         limit=2,
     )
 
-    assert len(results) == 2
-
-
-def test_top_two_water_rescue_candidates_are_correct(engine):
-    """The heap should retain the two highest-scoring Water candidates."""
-
-    results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=2,
-    )
-
-    returned_ids = [
-        result["animal_id"]
-        for result in results
+    assert [
+        record["record_key"]
+        for record in results
+    ] == [
+        "A:0",
+        "B:1",
     ]
 
-    assert returned_ids == ["A1", "A2"]
 
-
-def test_recommendation_ranks_are_sequential(engine):
-    """Returned recommendation ranks should begin at one."""
-
-    results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=4,
-    )
-
-    ranks = [
-        result["recommendation_rank"]
-        for result in results
-    ]
-
-    assert ranks == list(
-        range(1, len(results) + 1)
-    )
-
-
-def test_recommendations_include_match_reasons(engine):
-    """Every returned recommendation should explain its score."""
-
-    results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=4,
-    )
-
-    for result in results:
-        assert "match_reasons" in result
-        assert isinstance(
-            result["match_reasons"],
-            str,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Validation and error-handling tests
-# ---------------------------------------------------------------------------
-
-def test_unknown_rescue_type_raises_value_error(engine):
-    """An invalid rescue type should raise a clear error."""
-
+def test_recommend_rejects_unknown_profile(
+    engine: RescueRecommendationEngine,
+) -> None:
     with pytest.raises(
         ValueError,
         match="Unknown rescue profile",
     ):
-        engine.recommend(
-            rescue_type="Unknown Rescue",
-            limit=10,
-        )
+        engine.recommend("Unknown Rescue")
 
 
-def test_zero_limit_raises_value_error(engine):
-    """A zero recommendation limit should be rejected."""
-
+def test_recommend_rejects_zero_limit(
+    engine: RescueRecommendationEngine,
+) -> None:
     with pytest.raises(
         ValueError,
-        match="positive",
+        match="must be positive",
     ):
         engine.recommend(
-            rescue_type="Water Rescue",
+            "Water Rescue",
             limit=0,
         )
 
 
-def test_negative_limit_raises_value_error(engine):
-    """A negative recommendation limit should be rejected."""
-
+def test_recommend_rejects_negative_limit(
+    engine: RescueRecommendationEngine,
+) -> None:
     with pytest.raises(
         ValueError,
-        match="positive",
+        match="must be positive",
     ):
         engine.recommend(
-            rescue_type="Water Rescue",
-            limit=-5,
+            "Water Rescue",
+            limit=-1,
         )
 
 
-# ---------------------------------------------------------------------------
-# Cache and consistency tests
-# ---------------------------------------------------------------------------
+def test_recommend_rejects_noninteger_limit(
+    engine: RescueRecommendationEngine,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="must be positive",
+    ):
+        engine.recommend(
+            "Water Rescue",
+            limit=2.5,  # type: ignore[arg-type]
+        )
 
-def test_repeated_request_returns_same_results(engine):
-    """Cached and uncached requests should return equivalent results."""
 
+def test_recommend_returns_ranked_fields_and_protected_cache(
+    engine: RescueRecommendationEngine,
+    animal_records: list[dict[str, Any]],
+) -> None:
     first_results = engine.recommend(
-        rescue_type="Water Rescue",
+        "Water Rescue",
         limit=3,
+    )
+
+    assert 1 <= len(first_results) <= 3
+
+    assert [
+        record["match_score"]
+        for record in first_results
+    ] == sorted(
+        (
+            record["match_score"]
+            for record in first_results
+        ),
+        reverse=True,
+    )
+
+    assert all(
+        {
+            "recommendation_rank",
+            "match_score",
+            "match_reasons",
+        }.issubset(record)
+        for record in first_results
+    )
+
+    assert (
+        "Water Rescue",
+        3,
+    ) in engine.cache
+
+    original_name = first_results[0]["name"]
+
+    first_results[0]["name"] = (
+        "Changed Outside Cache"
     )
 
     second_results = engine.recommend(
-        rescue_type="Water Rescue",
+        "Water Rescue",
         limit=3,
     )
 
-    assert first_results == second_results
-
-
-def test_recommendation_request_is_added_to_cache(engine):
-    """Completed recommendations should be stored by rescue type and limit."""
-
-    engine.recommend(
-        rescue_type="Water Rescue",
-        limit=3,
+    assert (
+        second_results[0]["name"]
+        == original_name
     )
 
-    assert ("Water Rescue", 3) in engine.cache
-
-
-def test_cached_results_are_returned_as_copies(engine):
-    """Changing a returned result should not corrupt cached data."""
-
-    first_results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=3,
+    assert all(
+        "record_key" not in source_record
+        for source_record in animal_records
     )
 
-    first_results[0]["name"] = "Changed Name"
 
-    second_results = engine.recommend(
-        rescue_type="Water Rescue",
-        limit=3,
+def test_engine_accepts_dashboard_rescue_profiles() -> None:
+    """The engine should accept RescueProfile dataclass objects."""
+
+    engine = RescueRecommendationEngine(
+        records=[],
+        rescue_profiles=RESCUE_PROFILES,
     )
 
-    assert second_results[0]["name"] == "Max"
-
-
-def test_different_limits_create_different_cache_entries(engine):
-    """Each top-k request should have its own cache entry."""
-
-    engine.recommend(
-        rescue_type="Water Rescue",
-        limit=2,
+    assert set(engine.rescue_profiles) == set(
+        RESCUE_PROFILES
     )
 
-    engine.recommend(
-        rescue_type="Water Rescue",
-        limit=4,
+    water_profile = engine.rescue_profiles[
+        "Water Rescue"
+    ]
+
+    assert water_profile["breeds"] == (
+        "Labrador Retriever",
+        "Chesapeake Bay Retriever",
+        "Newfoundland",
     )
 
-    assert ("Water Rescue", 2) in engine.cache
-    assert ("Water Rescue", 4) in engine.cache
+    assert (
+        water_profile["minimum_age_weeks"]
+        == 26.0
+    )
+
+    assert (
+        water_profile["maximum_age_weeks"]
+        == 156.0
+    )
+
+    assert (
+        water_profile["preferred_sex"]
+        == "Intact Female"
+    )
+
+    assert (
+        water_profile["preferred_outcome"]
+        == "Transfer"
+    )
