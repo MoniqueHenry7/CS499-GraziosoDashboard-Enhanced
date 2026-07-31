@@ -1,0 +1,89 @@
+{
+  "collection": "animals_enhanced",
+  "baseline_count": 10000,
+  "final_count": 10000,
+  "temporary_record_removed": true,
+  "created_record_uid": "application:5cfdbbbcaa1c4211a405a0c23f9fc88a",
+  "update_result": {
+    "matched": 1,
+    "modified": 1
+  },
+  "delete_confirmed": true,
+  "safeguards": {
+    "missing_required_field_rejected": true,
+    "unsupported_field_rejected": true,
+    "negative_age_rejected": true,
+    "source_collection_protected": true
+  },
+  "audit_entries": [
+    {
+      "record_uid": "application:5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "source_record_id": "5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "action": "create",
+      "timestamp": "2026-07-31 19:05:54.948000",
+      "changed_fields": [
+        "age_in_weeks",
+        "animal_id",
+        "animal_type",
+        "breed",
+        "color",
+        "location_lat",
+        "location_long",
+        "name",
+        "outcome_subtype",
+        "outcome_type",
+        "sex_upon_outcome"
+      ],
+      "performed_by": "enhancement_three_notebook",
+      "success": true,
+      "error_message": null,
+      "details": {
+        "collection": "animals_enhanced"
+      }
+    },
+    {
+      "record_uid": "application:5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "source_record_id": "5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "action": "update",
+      "timestamp": "2026-07-31 19:05:54.951000",
+      "changed_fields": [
+        "age_in_weeks",
+        "name",
+        "outcome_type"
+      ],
+      "performed_by": "enhancement_three_notebook",
+      "success": true,
+      "error_message": null,
+      "details": {
+        "matched_count": 1,
+        "modified_count": 1
+      }
+    },
+    {
+      "record_uid": "application:5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "source_record_id": null,
+      "action": "delete",
+      "timestamp": "2026-07-31 19:05:54.952000",
+      "changed_fields": [],
+      "performed_by": "enhancement_three_notebook",
+      "success": false,
+      "error_message": "Deletion confirmation was not supplied.",
+      "details": {
+        "reason": "confirmation_required"
+      }
+    },
+    {
+      "record_uid": "application:5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "source_record_id": "5cfdbbbcaa1c4211a405a0c23f9fc88a",
+      "action": "delete",
+      "timestamp": "2026-07-31 19:05:54.954000",
+      "changed_fields": [],
+      "performed_by": "enhancement_three_notebook",
+      "success": true,
+      "error_message": null,
+      "details": {
+        "deleted_count": 1
+      }
+    }
+  ]
+}
