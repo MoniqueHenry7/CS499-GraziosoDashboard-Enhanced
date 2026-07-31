@@ -1,0 +1,5 @@
+Query,Phase,Stages,Returned,Documents Examined,Keys Examined,Execution Time (ms)
+Dog breed and age,Before indexes,"COLLSCAN, PROJECTION_SIMPLE",467,10000,0,18
+Dog breed and age,After indexes,"FETCH, IXSCAN, PROJECTION_SIMPLE",467,467,467,12
+Dog outcome and age,Before indexes,"COLLSCAN, PROJECTION_SIMPLE",748,10000,0,10
+Dog outcome and age,After indexes,"FETCH, IXSCAN, PROJECTION_SIMPLE",748,748,748,3

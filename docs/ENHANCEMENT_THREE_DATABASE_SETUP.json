@@ -1,0 +1,20 @@
+{
+  "source_collection": "animals",
+  "source_record_count": 10000,
+  "enhanced_collection": "animals_enhanced",
+  "enhanced_record_count": 0,
+  "audit_collection": "audit_logs",
+  "animal_validation_level": "strict",
+  "animal_validation_action": "error",
+  "animal_indexes": [
+    "_id_",
+    "uidx_record_uid"
+  ],
+  "audit_indexes": [
+    "_id_",
+    "idx_audit_timestamp"
+  ],
+  "invalid_record_rejected": true,
+  "valid_record_accepted": true,
+  "valid_test_record_removed": true
+}

@@ -1,0 +1,189 @@
+{
+  "explainVersion": "1",
+  "queryPlanner": {
+    "namespace": "aac.animals_enhanced",
+    "parsedQuery": {
+      "$and": [
+        {
+          "animal_type": {
+            "$eq": "Dog"
+          }
+        },
+        {
+          "breed": {
+            "$eq": "Pit Bull Mix"
+          }
+        },
+        {
+          "age_in_weeks": {
+            "$lte": 156.0
+          }
+        },
+        {
+          "age_in_weeks": {
+            "$gte": 26.0
+          }
+        }
+      ]
+    },
+    "indexFilterSet": false,
+    "queryHash": "B0F374E0",
+    "planCacheShapeHash": "B0F374E0",
+    "planCacheKey": "AEAC2A3F",
+    "optimizationTimeMillis": 0,
+    "maxIndexedOrSolutionsReached": false,
+    "maxIndexedAndSolutionsReached": false,
+    "maxScansToExplodeReached": false,
+    "prunedSimilarIndexes": false,
+    "winningPlan": {
+      "isCached": false,
+      "stage": "PROJECTION_SIMPLE",
+      "transformBy": {
+        "_id": 0,
+        "record_uid": 1,
+        "animal_id": 1,
+        "name": 1,
+        "breed": 1,
+        "age_in_weeks": 1,
+        "outcome_type": 1
+      },
+      "inputStage": {
+        "stage": "COLLSCAN",
+        "filter": {
+          "$and": [
+            {
+              "animal_type": {
+                "$eq": "Dog"
+              }
+            },
+            {
+              "breed": {
+                "$eq": "Pit Bull Mix"
+              }
+            },
+            {
+              "age_in_weeks": {
+                "$lte": 156.0
+              }
+            },
+            {
+              "age_in_weeks": {
+                "$gte": 26.0
+              }
+            }
+          ]
+        },
+        "direction": "forward"
+      }
+    },
+    "rejectedPlans": []
+  },
+  "executionStats": {
+    "executionSuccess": true,
+    "nReturned": 467,
+    "executionTimeMillis": 18,
+    "totalKeysExamined": 0,
+    "totalDocsExamined": 10000,
+    "executionStages": {
+      "isCached": false,
+      "stage": "PROJECTION_SIMPLE",
+      "nReturned": 467,
+      "executionTimeMillisEstimate": 0,
+      "works": 10001,
+      "advanced": 467,
+      "needTime": 9533,
+      "needYield": 0,
+      "saveState": 0,
+      "restoreState": 0,
+      "isEOF": 1,
+      "transformBy": {
+        "_id": 0,
+        "record_uid": 1,
+        "animal_id": 1,
+        "name": 1,
+        "breed": 1,
+        "age_in_weeks": 1,
+        "outcome_type": 1
+      },
+      "inputStage": {
+        "stage": "COLLSCAN",
+        "filter": {
+          "$and": [
+            {
+              "animal_type": {
+                "$eq": "Dog"
+              }
+            },
+            {
+              "breed": {
+                "$eq": "Pit Bull Mix"
+              }
+            },
+            {
+              "age_in_weeks": {
+                "$lte": 156.0
+              }
+            },
+            {
+              "age_in_weeks": {
+                "$gte": 26.0
+              }
+            }
+          ]
+        },
+        "nReturned": 467,
+        "executionTimeMillisEstimate": 0,
+        "works": 10001,
+        "advanced": 467,
+        "needTime": 9533,
+        "needYield": 0,
+        "saveState": 0,
+        "restoreState": 0,
+        "isEOF": 1,
+        "direction": "forward",
+        "docsExamined": 10000
+      }
+    }
+  },
+  "queryShapeHash": "EC5E50E46D20F8BB97A9CD1D8FD919714C043A839A28377D08A39D464F63CBD1",
+  "command": {
+    "find": "animals_enhanced",
+    "filter": {
+      "animal_type": "Dog",
+      "breed": "Pit Bull Mix",
+      "age_in_weeks": {
+        "$gte": 26.0,
+        "$lte": 156.0
+      }
+    },
+    "projection": {
+      "_id": 0,
+      "record_uid": 1,
+      "animal_id": 1,
+      "name": 1,
+      "breed": 1,
+      "age_in_weeks": 1,
+      "outcome_type": 1
+    },
+    "$db": "aac"
+  },
+  "serverInfo": {
+    "host": "Moniques-MacBook-Pro.local",
+    "port": 27017,
+    "version": "8.2.1",
+    "gitVersion": "3312bdcf28aa65f5930005e21c2cb130f648b8c3"
+  },
+  "serverParameters": {
+    "internalQueryFacetBufferSizeBytes": 104857600,
+    "internalQueryFacetMaxOutputDocSizeBytes": 104857600,
+    "internalLookupStageIntermediateDocumentMaxSizeBytes": 104857600,
+    "internalDocumentSourceGroupMaxMemoryBytes": 104857600,
+    "internalQueryMaxBlockingSortMemoryUsageBytes": 104857600,
+    "internalQueryProhibitBlockingMergeOnMongoS": 0,
+    "internalQueryMaxAddToSetBytes": 104857600,
+    "internalDocumentSourceSetWindowFieldsMaxMemoryBytes": 104857600,
+    "internalQueryFrameworkControl": "trySbeRestricted",
+    "internalQueryPlannerIgnoreIndexWithCollationForRegex": 1
+  },
+  "ok": 1.0
+}
