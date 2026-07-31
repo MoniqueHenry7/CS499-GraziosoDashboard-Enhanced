@@ -1,0 +1,73 @@
+{
+  "collection": "animals_enhanced",
+  "collection_count": 10000,
+  "test_breed": "Pit Bull Mix",
+  "page": 1,
+  "page_size": 10,
+  "records_on_page": 10,
+  "total_matching_records": 467,
+  "total_pages": 47,
+  "internal_id_excluded": true,
+  "distinct_breed_count": 711,
+  "distinct_outcomes": [
+    "Adoption",
+    "Died",
+    "Disposal",
+    "Euthanasia",
+    "Missing",
+    "Return to Owner",
+    "Rto-Adopt",
+    "Transfer"
+  ],
+  "dog_age_bounds": [
+    0.0813492063492064,
+    940.239583333333
+  ],
+  "outcome_summary": [
+    {
+      "total": 2539,
+      "outcome_type": "Adoption",
+      "average_age": 110.6
+    },
+    {
+      "total": 1644,
+      "outcome_type": "Return to Owner",
+      "average_age": 213.55
+    },
+    {
+      "total": 1180,
+      "outcome_type": "Transfer",
+      "average_age": 129.21
+    },
+    {
+      "total": 191,
+      "outcome_type": "Euthanasia",
+      "average_age": 249.96
+    },
+    {
+      "total": 16,
+      "outcome_type": "Died",
+      "average_age": 86.87
+    },
+    {
+      "total": 14,
+      "outcome_type": "Rto-Adopt",
+      "average_age": 139.35
+    },
+    {
+      "total": 3,
+      "outcome_type": "Missing",
+      "average_age": 72.92
+    },
+    {
+      "total": 2,
+      "outcome_type": "Disposal",
+      "average_age": 29.79
+    }
+  ],
+  "pagination_safeguards": {
+    "page_zero_rejected": true,
+    "oversized_page_rejected": true,
+    "unsupported_sort_rejected": true
+  }
+}

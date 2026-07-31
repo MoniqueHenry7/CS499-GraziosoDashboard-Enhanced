@@ -1,44 +1,81 @@
 """
 animal_shelter.py
 -----------------
-MongoDB CRUD service for the CS 499 enhanced Grazioso Salvare dashboard.
+MongoDB data-access service for the enhanced Grazioso Salvare dashboard.
 
-This module is based on the original AnimalShelter CRUD class created for
-CS 340 Client/Server Development. It has been refactored for the CS 499
-Software Design and Engineering enhancement.
+This module began as the CRUD class created for CS 340 Client/Server
+Development. It was refactored during the CS 499 Software Design and
+Engineering enhancement and expanded during the Databases enhancement.
 
-Enhancements include:
-- Removal of hardcoded database credentials.
-- Support for authenticated and unauthenticated MongoDB connections.
-- Consistent use of the configured MongoDB collection.
-- Improved input validation.
-- Safer update and delete operations.
-- More focused exception handling.
-- Clearer method names, documentation, and return values.
-- Separation of database responsibilities from dashboard and
-  recommendation logic.
+Enhancement Three adds:
+- Controlled MongoDB query construction.
+- Database-side filtering.
+- Field projections.
+- Sorting and pagination.
+- Distinct-value queries.
+- Aggregation pipelines.
+- Compatibility with the normalized animals_enhanced collection.
 
 Author: Monique Henry
 Course: CS 499 Computer Science Capstone
-Enhancement: Software Design and Engineering
+Enhancement: Databases
 """
 
+from math import isfinite
 from typing import Any
 
-from pymongo import MongoClient
+from pymongo import (
+    ASCENDING,
+    DESCENDING,
+    MongoClient,
+)
 from pymongo.errors import PyMongoError
+
+
+DASHBOARD_PROJECTION: dict[str, int] = {
+    "_id": 0,
+    "record_uid": 1,
+    "animal_id": 1,
+    "name": 1,
+    "animal_type": 1,
+    "breed": 1,
+    "sex_upon_outcome": 1,
+    "age_in_weeks": 1,
+    "outcome_type": 1,
+    "location_lat": 1,
+    "location_long": 1,
+}
+
+
+ALLOWED_SORT_FIELDS = frozenset(
+    {
+        "animal_id",
+        "name",
+        "breed",
+        "age_in_weeks",
+        "outcome_type",
+        "outcome_date",
+    }
+)
+
+
+ALLOWED_DISTINCT_FIELDS = frozenset(
+    {
+        "animal_type",
+        "breed",
+        "sex_upon_outcome",
+        "outcome_type",
+    }
+)
 
 
 class AnimalShelter:
     """
-    Provides CRUD operations for the MongoDB animal shelter collection.
+    Provide MongoDB access for the animal shelter collection.
 
-    The class is responsible only for database connectivity and basic
-    database operations. Dashboard presentation, rescue recommendation
-    logic, and user-interface behavior are handled by separate modules.
-
-    This separation of responsibilities improves maintainability,
-    readability, testing, and future extensibility.
+    Database connectivity and data-access behavior remain in this class.
+    Dashboard presentation, callbacks, and recommendation algorithms are
+    handled by separate modules.
     """
 
     def __init__(
@@ -55,12 +92,10 @@ class AnimalShelter:
 
         Args:
             username:
-                MongoDB username. May be None when authentication is
-                disabled in the local development environment.
+                Optional MongoDB username.
 
             password:
-                MongoDB password. May be None when authentication is
-                disabled.
+                Optional MongoDB password.
 
             host:
                 MongoDB server hostname or IP address.
@@ -69,15 +104,14 @@ class AnimalShelter:
                 MongoDB server port.
 
             db:
-                Name of the MongoDB database.
+                MongoDB database name.
 
             col:
-                Name of the MongoDB collection.
+                MongoDB collection name.
 
         Raises:
             ValueError:
-                If required connection configuration is missing or if
-                username/password values are supplied inconsistently.
+                If the connection configuration is invalid.
 
             ConnectionError:
                 If MongoDB cannot be reached.
@@ -92,15 +126,9 @@ class AnimalShelter:
             col=col,
         )
 
-        # Store database and collection names for reference.
         self.database_name = db
         self.collection_name = col
 
-        # Build MongoDB connection options.
-        #
-        # The current local CS 499 development environment can connect
-        # without authentication. Authentication can still be enabled by
-        # supplying a username and password through configuration.
         connection_options: dict[str, Any] = {
             "host": host,
             "port": int(port),
@@ -117,29 +145,35 @@ class AnimalShelter:
             )
 
         try:
-            # Establish the MongoDB client connection.
-            self.client = MongoClient(**connection_options)
+            self.client = MongoClient(
+                **connection_options
+            )
 
-            # Force an immediate connection check instead of waiting until
-            # the first database operation.
-            self.client.admin.command("ping")
+            # Force an immediate connection check.
+            self.client.admin.command(
+                "ping"
+            )
 
-            # Store reusable database and collection references.
             self.database = self.client[db]
             self.collection = self.database[col]
 
             print(
-                f"Connected to MongoDB successfully: "
-                f"{self.database_name}.{self.collection_name}"
+                "Connected to MongoDB successfully: "
+                f"{self.database_name}."
+                f"{self.collection_name}"
             )
 
         except PyMongoError as error:
-            # Do not expose usernames, passwords, or full connection strings.
+            # Avoid exposing credentials or a full connection string.
             raise ConnectionError(
-                "Unable to connect to the MongoDB database. "
-                "Verify that MongoDB is running and that the "
-                "connection configuration is correct."
+                "Unable to connect to MongoDB. "
+                "Verify that MongoDB is running and that "
+                "the connection configuration is correct."
             ) from error
+
+    # ------------------------------------------------------------------
+    # CONNECTION VALIDATION
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _validate_connection_settings(
@@ -150,41 +184,28 @@ class AnimalShelter:
         db: str,
         col: str,
     ) -> None:
-        """
-        Validate MongoDB connection configuration before connecting.
+        """Validate MongoDB connection values before connecting."""
 
-        Args:
-            username:
-                Optional MongoDB username.
-
-            password:
-                Optional MongoDB password.
-
-            host:
-                MongoDB host.
-
-            port:
-                MongoDB port.
-
-            db:
-                Database name.
-
-            col:
-                Collection name.
-
-        Raises:
-            ValueError:
-                If required values are invalid.
-        """
-
-        if not isinstance(host, str) or not host.strip():
+        if (
+            not isinstance(
+                host,
+                str,
+            )
+            or not host.strip()
+        ):
             raise ValueError(
                 "MongoDB host must be a non-empty string."
             )
 
         try:
-            numeric_port = int(port)
-        except (TypeError, ValueError) as error:
+            numeric_port = int(
+                port
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ) as error:
             raise ValueError(
                 "MongoDB port must be a valid integer."
             ) from error
@@ -194,22 +215,221 @@ class AnimalShelter:
                 "MongoDB port must be between 1 and 65535."
             )
 
-        if not isinstance(db, str) or not db.strip():
+        if (
+            not isinstance(
+                db,
+                str,
+            )
+            or not db.strip()
+        ):
             raise ValueError(
-                "MongoDB database name must be a non-empty string."
+                "MongoDB database name must be a "
+                "non-empty string."
             )
 
-        if not isinstance(col, str) or not col.strip():
+        if (
+            not isinstance(
+                col,
+                str,
+            )
+            or not col.strip()
+        ):
             raise ValueError(
-                "MongoDB collection name must be a non-empty string."
+                "MongoDB collection name must be a "
+                "non-empty string."
             )
 
         # Authentication values must be supplied together.
         if bool(username) != bool(password):
             raise ValueError(
-                "MongoDB username and password must both be supplied "
-                "or both be omitted."
+                "MongoDB username and password must both "
+                "be supplied or both be omitted."
             )
+
+    # ------------------------------------------------------------------
+    # ENHANCEMENT THREE QUERY VALIDATION
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _clean_optional_text(
+        value: str | None,
+        label: str,
+    ) -> str | None:
+        """Return cleaned optional text after validation."""
+
+        if value is None:
+            return None
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            raise ValueError(
+                f"{label} must be a string or None."
+            )
+
+        cleaned = value.strip()
+
+        if not cleaned:
+            return None
+
+        if len(cleaned) > 200:
+            raise ValueError(
+                f"{label} exceeds the permitted length."
+            )
+
+        return cleaned
+
+    @classmethod
+    def build_animal_query(
+        cls,
+        *,
+        animal_type: str | None = "Dog",
+        breed: str | None = None,
+        outcome_type: str | None = None,
+        sex_upon_outcome: str | None = None,
+        age_range: (
+            tuple[float, float]
+            | list[float]
+            | None
+        ) = None,
+    ) -> dict[str, Any]:
+        """
+        Build a MongoDB query using approved application filters.
+
+        Callers provide normal filter values rather than unrestricted
+        MongoDB fields or operators.
+        """
+
+        query: dict[str, Any] = {}
+
+        text_filters = {
+            "animal_type": (
+                animal_type,
+                "Animal type",
+            ),
+            "breed": (
+                breed,
+                "Breed",
+            ),
+            "outcome_type": (
+                outcome_type,
+                "Outcome type",
+            ),
+            "sex_upon_outcome": (
+                sex_upon_outcome,
+                "Sex upon outcome",
+            ),
+        }
+
+        for field, (
+            value,
+            label,
+        ) in text_filters.items():
+
+            cleaned = cls._clean_optional_text(
+                value,
+                label,
+            )
+
+            if cleaned is not None:
+                query[field] = cleaned
+
+        if age_range is not None:
+            if (
+                not isinstance(
+                    age_range,
+                    (
+                        tuple,
+                        list,
+                    ),
+                )
+                or len(age_range) != 2
+            ):
+                raise ValueError(
+                    "Age range must contain exactly two values."
+                )
+
+            try:
+                minimum_age = float(
+                    age_range[0]
+                )
+
+                maximum_age = float(
+                    age_range[1]
+                )
+
+            except (
+                TypeError,
+                ValueError,
+            ) as error:
+                raise ValueError(
+                    "Age values must be numeric."
+                ) from error
+
+            if not (
+                isfinite(
+                    minimum_age
+                )
+                and isfinite(
+                    maximum_age
+                )
+            ):
+                raise ValueError(
+                    "Age values must be finite numbers."
+                )
+
+            if (
+                minimum_age < 0
+                or maximum_age < 0
+            ):
+                raise ValueError(
+                    "Age values cannot be negative."
+                )
+
+            if minimum_age > maximum_age:
+                raise ValueError(
+                    "Minimum age cannot exceed maximum age."
+                )
+
+            query["age_in_weeks"] = {
+                "$gte": minimum_age,
+                "$lte": maximum_age,
+            }
+
+        return query
+
+    @staticmethod
+    def _validate_page_parameters(
+        page: int,
+        page_size: int,
+    ) -> tuple[int, int]:
+        """Validate pagination boundaries."""
+
+        if (
+            not isinstance(
+                page,
+                int,
+            )
+            or page < 1
+        ):
+            raise ValueError(
+                "Page must be an integer greater than "
+                "or equal to 1."
+            )
+
+        if (
+            not isinstance(
+                page_size,
+                int,
+            )
+            or not 1 <= page_size <= 100
+        ):
+            raise ValueError(
+                "Page size must be between 1 and 100."
+            )
+
+        return page, page_size
 
     # ------------------------------------------------------------------
     # CREATE
@@ -220,34 +440,36 @@ class AnimalShelter:
         data: dict[str, Any],
     ) -> bool:
         """
-        Insert one animal document into the configured collection.
-
-        Args:
-            data:
-                Dictionary containing the document to insert.
+        Insert one document into the configured collection.
 
         Returns:
-            True if MongoDB acknowledged the insert.
-            False if the database operation failed.
-
-        Raises:
-            ValueError:
-                If data is not a non-empty dictionary.
+            True when MongoDB acknowledges the insert.
+            False when the database operation fails.
         """
 
-        if not isinstance(data, dict) or not data:
+        if (
+            not isinstance(
+                data,
+                dict,
+            )
+            or not data
+        ):
             raise ValueError(
                 "Create requires a non-empty dictionary."
             )
 
         try:
-            result = self.collection.insert_one(data)
+            result = self.collection.insert_one(
+                data
+            )
 
-            return bool(result.acknowledged)
+            return bool(
+                result.acknowledged
+            )
 
         except PyMongoError as error:
             print(
-                f"[DATABASE ERROR] Create operation failed: "
+                "[DATABASE ERROR] Create operation failed: "
                 f"{type(error).__name__}"
             )
 
@@ -263,47 +485,29 @@ class AnimalShelter:
         projection: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Retrieve animal documents that match a MongoDB query.
+        Retrieve documents matching a MongoDB query.
 
-        Args:
-            query:
-                MongoDB query dictionary.
-
-                An empty dictionary or None retrieves all documents.
-
-            projection:
-                Optional MongoDB field projection dictionary.
-
-                Example:
-                    {
-                        "animal_id": 1,
-                        "name": 1,
-                        "breed": 1
-                    }
-
-        Returns:
-            A list containing matching MongoDB documents.
-
-            Returns an empty list if no records match or if the database
-            operation fails.
-
-        Raises:
-            ValueError:
-                If query or projection is not a dictionary.
+        This method is retained for backward compatibility with the
+        existing dashboard and Enhancement Two tests.
         """
 
-        # None means "retrieve all records."
         if query is None:
             query = {}
 
-        if not isinstance(query, dict):
+        if not isinstance(
+            query,
+            dict,
+        ):
             raise ValueError(
                 "Read query must be a dictionary."
             )
 
-        if projection is not None and not isinstance(
-            projection,
-            dict,
+        if (
+            projection is not None
+            and not isinstance(
+                projection,
+                dict,
+            )
         ):
             raise ValueError(
                 "Projection must be a dictionary or None."
@@ -315,11 +519,319 @@ class AnimalShelter:
                 projection,
             )
 
-            return list(cursor)
+            return list(
+                cursor
+            )
 
         except PyMongoError as error:
             print(
-                f"[DATABASE ERROR] Read operation failed: "
+                "[DATABASE ERROR] Read operation failed: "
+                f"{type(error).__name__}"
+            )
+
+            return []
+
+    # ------------------------------------------------------------------
+    # ENHANCEMENT THREE DATABASE-SIDE READ OPERATIONS
+    # ------------------------------------------------------------------
+
+    def find_animals_page(
+        self,
+        *,
+        animal_type: str | None = "Dog",
+        breed: str | None = None,
+        outcome_type: str | None = None,
+        sex_upon_outcome: str | None = None,
+        age_range: (
+            tuple[float, float]
+            | list[float]
+            | None
+        ) = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort_field: str = "animal_id",
+        sort_direction: int = ASCENDING,
+    ) -> dict[str, Any]:
+        """
+        Return projected, sorted, and paginated animal records.
+
+        Filtering, sorting, skipping, and limiting occur inside MongoDB
+        rather than after loading the entire collection into Pandas.
+        """
+
+        page, page_size = (
+            self._validate_page_parameters(
+                page,
+                page_size,
+            )
+        )
+
+        if sort_field not in ALLOWED_SORT_FIELDS:
+            raise ValueError(
+                f"Unsupported sort field: {sort_field}"
+            )
+
+        if sort_direction not in {
+            ASCENDING,
+            DESCENDING,
+        }:
+            raise ValueError(
+                "Sort direction must be ASCENDING "
+                "or DESCENDING."
+            )
+
+        query = self.build_animal_query(
+            animal_type=animal_type,
+            breed=breed,
+            outcome_type=outcome_type,
+            sex_upon_outcome=sex_upon_outcome,
+            age_range=age_range,
+        )
+
+        skip_count = (
+            page - 1
+        ) * page_size
+
+        try:
+            total_records = (
+                self.collection.count_documents(
+                    query
+                )
+            )
+
+            cursor = (
+                self.collection.find(
+                    query,
+                    DASHBOARD_PROJECTION,
+                )
+                .sort(
+                    sort_field,
+                    sort_direction,
+                )
+                .skip(
+                    skip_count
+                )
+                .limit(
+                    page_size
+                )
+            )
+
+            records = list(
+                cursor
+            )
+
+            # The normalized database uses age_in_weeks.
+            # Enhancement Two's dashboard and recommendation layer still
+            # use age_upon_outcome_in_weeks. Supplying both maintains
+            # compatibility during integration.
+            for record in records:
+                record[
+                    "age_upon_outcome_in_weeks"
+                ] = record.get(
+                    "age_in_weeks"
+                )
+
+            if total_records:
+                total_pages = (
+                    total_records
+                    + page_size
+                    - 1
+                ) // page_size
+
+            else:
+                total_pages = 0
+
+            return {
+                "records": records,
+                "page": page,
+                "page_size": page_size,
+                "total_records": total_records,
+                "total_pages": total_pages,
+            }
+
+        except PyMongoError as error:
+            print(
+                "[DATABASE ERROR] Paginated read failed: "
+                f"{type(error).__name__}"
+            )
+
+            return {
+                "records": [],
+                "page": page,
+                "page_size": page_size,
+                "total_records": 0,
+                "total_pages": 0,
+            }
+
+    def distinct_values(
+        self,
+        field: str,
+        *,
+        animal_type: str | None = "Dog",
+    ) -> list[str]:
+        """Return approved distinct values directly from MongoDB."""
+
+        if field not in ALLOWED_DISTINCT_FIELDS:
+            raise ValueError(
+                f"Unsupported distinct field: {field}"
+            )
+
+        query = self.build_animal_query(
+            animal_type=animal_type
+        )
+
+        try:
+            values = self.collection.distinct(
+                field,
+                query,
+            )
+
+            cleaned_values = {
+                str(value).strip()
+                for value in values
+                if value is not None
+                and str(value).strip()
+            }
+
+            return sorted(
+                cleaned_values,
+                key=str.casefold,
+            )
+
+        except PyMongoError as error:
+            print(
+                "[DATABASE ERROR] Distinct query failed: "
+                f"{type(error).__name__}"
+            )
+
+            return []
+
+    def age_bounds(
+        self,
+        *,
+        animal_type: str | None = "Dog",
+    ) -> tuple[float, float] | None:
+        """Calculate minimum and maximum ages with aggregation."""
+
+        query = self.build_animal_query(
+            animal_type=animal_type
+        )
+
+        pipeline = [
+            {
+                "$match": {
+                    **query,
+                    "age_in_weeks": {
+                        "$ne": None,
+                    },
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "minimum_age": {
+                        "$min": "$age_in_weeks",
+                    },
+                    "maximum_age": {
+                        "$max": "$age_in_weeks",
+                    },
+                }
+            },
+        ]
+
+        try:
+            results = list(
+                self.collection.aggregate(
+                    pipeline
+                )
+            )
+
+            if not results:
+                return None
+
+            return (
+                float(
+                    results[0][
+                        "minimum_age"
+                    ]
+                ),
+                float(
+                    results[0][
+                        "maximum_age"
+                    ]
+                ),
+            )
+
+        except PyMongoError as error:
+            print(
+                "[DATABASE ERROR] Age aggregation failed: "
+                f"{type(error).__name__}"
+            )
+
+            return None
+
+    def outcome_summary(
+        self,
+        *,
+        animal_type: str | None = "Dog",
+    ) -> list[dict[str, Any]]:
+        """Summarize record totals and average ages by outcome."""
+
+        query = self.build_animal_query(
+            animal_type=animal_type
+        )
+
+        pipeline = [
+            {
+                "$match": query,
+            },
+            {
+                "$group": {
+                    "_id": "$outcome_type",
+                    "total": {
+                        "$sum": 1,
+                    },
+                    "average_age": {
+                        "$avg": "$age_in_weeks",
+                    },
+                }
+            },
+            {
+                "$sort": {
+                    "total": -1,
+                    "_id": 1,
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "outcome_type": {
+                        "$ifNull": [
+                            "$_id",
+                            "Unknown",
+                        ]
+                    },
+                    "total": 1,
+                    "average_age": {
+                        "$round": [
+                            "$average_age",
+                            2,
+                        ]
+                    },
+                }
+            },
+        ]
+
+        try:
+            return list(
+                self.collection.aggregate(
+                    pipeline
+                )
+            )
+
+        except PyMongoError as error:
+            print(
+                "[DATABASE ERROR] Outcome aggregation failed: "
                 f"{type(error).__name__}"
             )
 
@@ -335,51 +847,41 @@ class AnimalShelter:
         update_data: dict[str, Any],
     ) -> int:
         """
-        Update documents that match a MongoDB query.
+        Update documents matching a MongoDB query.
 
-        The method intentionally rejects an empty query. Allowing an empty
-        update query could unintentionally modify every document in the
-        collection.
-
-        Args:
-            query:
-                Non-empty MongoDB query identifying documents to update.
-
-            update_data:
-                Non-empty dictionary containing fields and values to change.
-
-        Returns:
-            Number of documents modified.
-
-            Returns 0 when no documents were modified or when the database
-            operation fails.
-
-        Raises:
-            ValueError:
-                If query or update_data is empty or not a dictionary.
+        An empty query is rejected to prevent unintentionally updating
+        every document in the collection.
         """
 
-        if not isinstance(query, dict) or not query:
+        if (
+            not isinstance(
+                query,
+                dict,
+            )
+            or not query
+        ):
             raise ValueError(
                 "Update requires a non-empty query. "
                 "Empty update queries are not permitted."
             )
 
         if (
-            not isinstance(update_data, dict)
+            not isinstance(
+                update_data,
+                dict,
+            )
             or not update_data
         ):
             raise ValueError(
                 "Update requires non-empty update data."
             )
 
-        # Prevent callers from supplying MongoDB update operators directly
-        # through update_data during this milestone.
-        #
-        # The service controls the use of "$set" so that ordinary field
-        # updates follow one predictable structure.
+        # The service controls use of $set. Callers cannot submit their
+        # own MongoDB update operators through update_data.
         if any(
-            str(field).startswith("$")
+            str(field).startswith(
+                "$"
+            )
             for field in update_data
         ):
             raise ValueError(
@@ -390,15 +892,17 @@ class AnimalShelter:
             result = self.collection.update_many(
                 query,
                 {
-                    "$set": update_data
+                    "$set": update_data,
                 },
             )
 
-            return int(result.modified_count)
+            return int(
+                result.modified_count
+            )
 
         except PyMongoError as error:
             print(
-                f"[DATABASE ERROR] Update operation failed: "
+                "[DATABASE ERROR] Update operation failed: "
                 f"{type(error).__name__}"
             )
 
@@ -413,40 +917,36 @@ class AnimalShelter:
         query: dict[str, Any],
     ) -> int:
         """
-        Delete documents that match a MongoDB query.
+        Delete documents matching a MongoDB query.
 
-        The method intentionally rejects an empty query to reduce the risk
-        of accidentally deleting every record in the collection.
-
-        Args:
-            query:
-                Non-empty MongoDB query identifying documents to delete.
-
-        Returns:
-            Number of documents deleted.
-
-            Returns 0 when no documents were deleted or when the database
-            operation fails.
-
-        Raises:
-            ValueError:
-                If query is empty or is not a dictionary.
+        An empty query is rejected to prevent accidentally deleting every
+        record in the collection.
         """
 
-        if not isinstance(query, dict) or not query:
+        if (
+            not isinstance(
+                query,
+                dict,
+            )
+            or not query
+        ):
             raise ValueError(
                 "Delete requires a non-empty query. "
                 "Empty delete queries are not permitted."
             )
 
         try:
-            result = self.collection.delete_many(query)
+            result = self.collection.delete_many(
+                query
+            )
 
-            return int(result.deleted_count)
+            return int(
+                result.deleted_count
+            )
 
         except PyMongoError as error:
             print(
-                f"[DATABASE ERROR] Delete operation failed: "
+                "[DATABASE ERROR] Delete operation failed: "
                 f"{type(error).__name__}"
             )
 
@@ -457,16 +957,12 @@ class AnimalShelter:
     # ------------------------------------------------------------------
 
     def ping(self) -> bool:
-        """
-        Check whether the MongoDB server is reachable.
-
-        Returns:
-            True when the MongoDB server responds successfully.
-            False when the connection check fails.
-        """
+        """Return True when MongoDB responds to a ping."""
 
         try:
-            self.client.admin.command("ping")
+            self.client.admin.command(
+                "ping"
+            )
 
             return True
 
@@ -474,24 +970,18 @@ class AnimalShelter:
             return False
 
     def close(self) -> None:
-        """
-        Close the MongoDB client connection.
+        """Close the MongoDB client connection."""
 
-        Calling close() when the application shuts down helps release
-        database connection resources cleanly.
-        """
-
-        if hasattr(self, "client"):
+        if hasattr(
+            self,
+            "client",
+        ):
             self.client.close()
 
-    def __enter__(self) -> "AnimalShelter":
-        """
-        Allow AnimalShelter to optionally be used as a context manager.
-
-        Example:
-            with AnimalShelter(...) as shelter:
-                records = shelter.read({})
-        """
+    def __enter__(
+        self,
+    ) -> "AnimalShelter":
+        """Allow AnimalShelter to be used as a context manager."""
 
         return self
 
@@ -501,8 +991,6 @@ class AnimalShelter:
         exc_value: Any,
         traceback: Any,
     ) -> None:
-        """
-        Close the MongoDB connection when leaving a context manager.
-        """
+        """Close the connection when leaving a context manager."""
 
         self.close()
