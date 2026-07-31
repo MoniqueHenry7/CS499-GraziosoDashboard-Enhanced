@@ -1,14 +1,15 @@
 """Application service layer for the Grazioso Salvare dashboard.
 
-Enhancement Two integrates RescueRecommendationEngine with the existing
-DashboardService interface used by callbacks.py. The service preserves the
-breed, age, and outcome filters while delegating rescue-candidate selection
-and top-k ranking to indexed dictionaries, sets, binary search, a bounded
-min-heap, and cached recommendation results.
+Enhancement Two integrates RescueRecommendationEngine with dictionary
+indexes, sets, binary search, bounded top-k selection, and caching.
+
+Enhancement Three moves approved dashboard filtering, projections,
+distinct-value retrieval, age aggregation, and paginated reads into
+MongoDB while preserving the existing recommendation engine.
 
 Author: Monique Henry
 Course: CS 499 Computer Science Capstone
-Enhancement: Algorithms and Data Structures
+Enhancement: Databases
 """
 
 from typing import Any
@@ -83,16 +84,74 @@ class DashboardService:
     # Data loading and cleaning
     # ------------------------------------------------------------------
 
-    def load_animals(self, dogs_only: bool = True) -> pd.DataFrame:
-        """Read animal records and return a cleaned DataFrame."""
+    def load_animals(
+        self,
+        dogs_only: bool = True,
+        *,
+        breed: str | None = None,
+        age_range: (
+            list[float]
+            | tuple[float, float]
+            | None
+        ) = None,
+        outcome_type: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Retrieve projected records using database-side filtering.
 
-        query = {"animal_type": "Dog"} if dogs_only else {}
-        records = self.shelter.read(query)
+        MongoDB returns records in validated pages. All matching pages
+        are combined before the Enhancement Two recommendation engine
+        builds its indexes and performs top-k ranking.
+        """
+
+        animal_type = (
+            "Dog"
+            if dogs_only
+            else None
+        )
+
+        records: list[dict[str, Any]] = []
+
+        page = 1
+        page_size = 100
+
+        while True:
+            page_result = self.shelter.find_animals_page(
+                animal_type=animal_type,
+                breed=breed,
+                outcome_type=outcome_type,
+                age_range=age_range,
+                page=page,
+                page_size=page_size,
+                sort_field="animal_id",
+            )
+
+            page_records = page_result.get(
+                "records",
+                [],
+            )
+
+            records.extend(page_records)
+
+            total_pages = int(
+                page_result.get(
+                    "total_pages",
+                    0,
+                )
+                or 0
+            )
+
+            if total_pages == 0 or page >= total_pages:
+                break
+
+            page += 1
 
         if not records:
             return self._empty_frame()
 
-        return self._clean_frame(pd.DataFrame(records))
+        return self._clean_frame(
+            pd.DataFrame(records)
+        )
 
     @staticmethod
     def _clean_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -142,6 +201,16 @@ class DashboardService:
             errors="coerce",
         )
 
+        for numeric_column in (
+            "recommendation_rank",
+            "match_score",
+        ):
+            if numeric_column in cleaned.columns:
+                cleaned[numeric_column] = pd.to_numeric(
+                    cleaned[numeric_column],
+                    errors="coerce",
+                )
+
         return cleaned
 
     @staticmethod
@@ -163,53 +232,44 @@ class DashboardService:
     # ------------------------------------------------------------------
 
     def available_breeds(self) -> list[str]:
-        """Return sorted nonempty dog-breed values."""
+        """Return dog breeds directly from MongoDB."""
 
-        frame = self.load_animals(dogs_only=True)
-
-        if frame.empty:
-            return []
-
-        breeds = {
-            str(value).strip()
-            for value in frame["breed"].dropna()
-            if str(value).strip()
-        }
-
-        return sorted(breeds, key=str.casefold)
+        return self.shelter.distinct_values(
+            "breed",
+            animal_type="Dog",
+        )
 
     def available_outcomes(self) -> list[str]:
-        """Return sorted nonempty shelter-outcome values."""
+        """Return dog outcome values directly from MongoDB."""
 
-        frame = self.load_animals(dogs_only=True)
-
-        if frame.empty:
-            return []
-
-        outcomes = {
-            str(value).strip()
-            for value in frame["outcome_type"].dropna()
-            if str(value).strip()
-        }
-
-        return sorted(outcomes, key=str.casefold)
+        return self.shelter.distinct_values(
+            "outcome_type",
+            animal_type="Dog",
+        )
 
     def age_bounds(self) -> tuple[float, float]:
-        """Return minimum and maximum valid dog ages in weeks."""
+        """Return dog age boundaries calculated by MongoDB."""
 
-        frame = self.load_animals(dogs_only=True)
+        bounds = self.shelter.age_bounds(
+            animal_type="Dog"
+        )
 
-        if frame.empty:
+        if bounds is None:
             return 0.0, 1000.0
 
-        ages = frame["age_upon_outcome_in_weeks"].dropna()
+        minimum_age, maximum_age = bounds
 
-        if ages.empty:
-            return 0.0, 1000.0
+        minimum_age = max(
+            0.0,
+            float(minimum_age),
+        )
 
-        minimum = max(0.0, float(ages.min()))
-        maximum = max(minimum, float(ages.max()))
-        return minimum, maximum
+        maximum_age = max(
+            minimum_age,
+            float(maximum_age),
+        )
+
+        return minimum_age, maximum_age
 
     # ------------------------------------------------------------------
     # Filter validation
@@ -401,38 +461,12 @@ class DashboardService:
 
         validated_age_range = self._validate_age_range(age_range)
 
-        frame = self.load_animals(dogs_only=True)
-
-        if frame.empty:
-            return self._empty_frame()
-
-        if selected_breed is not None:
-            frame = frame[
-                frame["breed"].astype(str).str.casefold()
-                == selected_breed.casefold()
-            ].copy()
-
-        if validated_age_range is not None:
-            minimum_age, maximum_age = validated_age_range
-
-            ages = pd.to_numeric(
-                frame["age_upon_outcome_in_weeks"],
-                errors="coerce",
-            )
-
-            frame = frame[
-                ages.between(
-                    minimum_age,
-                    maximum_age,
-                    inclusive="both",
-                )
-            ].copy()
-
-        if selected_outcome is not None:
-            frame = frame[
-                frame["outcome_type"].astype(str).str.casefold()
-                == selected_outcome.casefold()
-            ].copy()
+        frame = self.load_animals(
+            dogs_only=True,
+            breed=selected_breed,
+            age_range=validated_age_range,
+            outcome_type=selected_outcome,
+        )
 
         if frame.empty:
             return self._empty_frame()
@@ -461,34 +495,14 @@ class DashboardService:
         engine = self._get_recommendation_engine(frame)
         result_limit = min(recommendation_limit, len(frame))
 
-        # Optional dashboard filters are explicit user constraints.
-        # After those filters narrow the DataFrame, rank every remaining
-        # record instead of applying the profile candidate-reduction step
-        # a second time. The bounded min-heap still performs top-k ranking.
-        has_explicit_filter = any(
-            value is not None
-            for value in (
-                selected_breed,
-                validated_age_range,
-                selected_outcome,
-            )
+        # The engine was built from the already-filtered DataFrame, so the
+        # optional dashboard filters remain hard constraints while the
+        # engine performs indexed candidate selection and bounded top-k
+        # ranking within that filtered record set.
+        recommendation_records = engine.recommend(
+            rescue_type=str(rescue_type),
+            limit=result_limit,
         )
-
-        normalized_rescue_type = str(rescue_type)
-
-        if has_explicit_filter:
-            recommendation_records = engine._select_top_candidates(
-                candidate_ids=set(engine.records),
-                profile=engine.rescue_profiles[
-                    normalized_rescue_type
-                ],
-                limit=result_limit,
-            )
-        else:
-            recommendation_records = engine.recommend(
-                rescue_type=normalized_rescue_type,
-                limit=result_limit,
-            )
 
         if not recommendation_records:
             return self._empty_frame()
@@ -514,7 +528,7 @@ class DashboardService:
         ).fillna(0.0)
 
         ranked["match_level"] = [
-            classify_match(int(score))
+            classify_match(float(score))
             for score in ranked["match_score"]
         ]
 

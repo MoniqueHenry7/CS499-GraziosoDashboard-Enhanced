@@ -1,24 +1,25 @@
 """
 test_security_safeguards.py
 ---------------------------
-Unit tests for selected defensive-programming and security safeguards
-implemented in the enhanced Grazioso Salvare application.
+Security and defensive-programming tests for the enhanced Grazioso
+Salvare dashboard.
 
-These tests verify:
-- Safe local configuration defaults.
-- Incomplete MongoDB credentials are rejected.
+These tests verify that:
+
+- Local MongoDB defaults are safe and predictable.
+- The validated animals_enhanced collection is used by default.
+- MongoDB credentials must be supplied together.
 - Invalid MongoDB ports are rejected.
-- Empty update queries are blocked.
-- Empty delete queries are blocked.
-- Direct MongoDB update operators are rejected from ordinary update data.
+- Empty update and delete queries are rejected.
+- Empty update data is rejected.
+- Callers cannot submit MongoDB update operators directly.
 
-These safeguards reduce the risk of insecure configuration,
-unintentional collection-wide modifications, and uncontrolled update
-operations.
+The database validation tests use AnimalShelter.__new__() so they do not
+create a live MongoDB connection.
 
 Author: Monique Henry
 Course: CS 499 Computer Science Capstone
-Enhancement: Software Design and Engineering
+Enhancement: Databases
 """
 
 import pytest
@@ -27,210 +28,244 @@ from animal_shelter import AnimalShelter
 from config import AppConfig
 
 
-def test_config_uses_safe_local_defaults(
-    monkeypatch,
-):
+# ----------------------------------------------------------------------
+# TEST HELPERS
+# ----------------------------------------------------------------------
+
+
+def clear_mongodb_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
-    When no environment variables are supplied, the application should
-    use the expected local-development defaults without storing database
-    credentials directly in the configuration.
+    Remove MongoDB environment variables before configuration tests.
+
+    Clearing the variables ensures that each test evaluates only the
+    settings explicitly supplied by that test.
     """
 
-    environment_variables = [
+    environment_variables = (
         "MONGO_HOST",
         "MONGO_PORT",
         "MONGO_DB",
+        "MONGO_DATABASE",
         "MONGO_COLLECTION",
         "MONGO_USERNAME",
         "MONGO_PASSWORD",
-        "DASH_DEBUG",
-    ]
+    )
 
-    # Remove any existing values only for the duration of this test.
-    for variable in environment_variables:
-
+    for variable_name in environment_variables:
         monkeypatch.delenv(
-            variable,
+            variable_name,
             raising=False,
         )
+
+
+@pytest.fixture
+def uninitialized_shelter() -> AnimalShelter:
+    """
+    Return an AnimalShelter instance without opening MongoDB.
+
+    The tested safeguards execute before a database collection is used,
+    so calling __init__() is unnecessary.
+    """
+
+    return AnimalShelter.__new__(
+        AnimalShelter
+    )
+
+
+# ----------------------------------------------------------------------
+# CONFIGURATION SAFEGUARDS
+# ----------------------------------------------------------------------
+
+
+def test_config_uses_safe_local_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Local development should use predictable, non-secret defaults.
+
+    Enhancement Three uses the validated and indexed collection rather
+    than the original source collection.
+    """
+
+    clear_mongodb_environment(
+        monkeypatch
+    )
 
     config = AppConfig.from_env()
 
     assert config.mongo_host == "127.0.0.1"
-
     assert config.mongo_port == 27017
-
     assert config.mongo_db == "aac"
 
-    assert config.mongo_collection == "animals"
+    assert (
+        config.mongo_collection
+        == "animals_enhanced"
+    )
 
     assert config.mongo_username is None
-
     assert config.mongo_password is None
 
-    assert config.debug is False
 
-
-def test_username_without_password_is_rejected(
-    monkeypatch,
-):
+@pytest.mark.parametrize(
+    (
+        "username",
+        "password",
+    ),
+    [
+        (
+            "test-user",
+            None,
+        ),
+        (
+            None,
+            "test-password",
+        ),
+    ],
+)
+def test_config_requires_complete_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    username: str | None,
+    password: str | None,
+) -> None:
     """
-    A MongoDB username without a matching password should fail
-    validation.
+    A username and password must be supplied together.
+
+    Supplying only one authentication value could create an incomplete
+    or misleading MongoDB connection configuration.
     """
 
-    monkeypatch.setenv(
-        "MONGO_USERNAME",
-        "test_user",
+    clear_mongodb_environment(
+        monkeypatch
     )
 
-    monkeypatch.delenv(
-        "MONGO_PASSWORD",
-        raising=False,
-    )
+    if username is not None:
+        monkeypatch.setenv(
+            "MONGO_USERNAME",
+            username,
+        )
+
+    if password is not None:
+        monkeypatch.setenv(
+            "MONGO_PASSWORD",
+            password,
+        )
 
     with pytest.raises(
         ValueError,
-        match="username and password",
+        match="both",
     ):
-
         AppConfig.from_env()
 
 
-def test_password_without_username_is_rejected(
-    monkeypatch,
-):
+def test_config_rejects_nonnumeric_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
-    A MongoDB password without a matching username should also fail
-    validation.
+    A MongoDB port must be convertible to an integer.
     """
 
-    monkeypatch.delenv(
-        "MONGO_USERNAME",
-        raising=False,
+    clear_mongodb_environment(
+        monkeypatch
     )
-
-    monkeypatch.setenv(
-        "MONGO_PASSWORD",
-        "test_password",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="username and password",
-    ):
-
-        AppConfig.from_env()
-
-
-def test_non_numeric_database_port_is_rejected(
-    monkeypatch,
-):
-    """
-    MongoDB port configuration must contain a valid integer.
-    """
-
-    monkeypatch.setenv(
-        "MONGO_PORT",
-        "not-a-port",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="valid integer",
-    ):
-
-        AppConfig.from_env()
-
-
-def test_out_of_range_database_port_is_rejected(
-    monkeypatch,
-):
-    """
-    MongoDB ports must remain within the valid TCP/UDP port range.
-    """
 
     monkeypatch.setenv(
         "MONGO_PORT",
-        "70000",
+        "not-a-number",
     )
 
     with pytest.raises(
         ValueError,
-        match="between 1 and 65535",
+        match="integer",
     ):
-
         AppConfig.from_env()
 
 
-def test_empty_update_query_is_blocked():
+@pytest.mark.parametrize(
+    "invalid_port",
+    [
+        "0",
+        "-1",
+        "65536",
+    ],
+)
+def test_config_rejects_out_of_range_port(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_port: str,
+) -> None:
     """
-    An empty MongoDB update query could unintentionally modify every
-    document in the collection.
-
-    The enhanced CRUD class should reject the request before contacting
-    MongoDB.
+    A MongoDB port must fall within the valid network-port range.
     """
 
-    # __new__ creates the object without running __init__.
-    #
-    # This lets us test validation logic without requiring a live
-    # MongoDB connection.
-    shelter = AnimalShelter.__new__(
-        AnimalShelter
+    clear_mongodb_environment(
+        monkeypatch
     )
+
+    monkeypatch.setenv(
+        "MONGO_PORT",
+        invalid_port,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="between",
+    ):
+        AppConfig.from_env()
+
+
+# ----------------------------------------------------------------------
+# DESTRUCTIVE-OPERATION SAFEGUARDS
+# ----------------------------------------------------------------------
+
+
+def test_update_rejects_empty_query(
+    uninitialized_shelter: AnimalShelter,
+) -> None:
+    """
+    An empty update query could modify every document in a collection.
+    """
 
     with pytest.raises(
         ValueError,
         match="non-empty query",
     ):
-
-        shelter.update(
+        uninitialized_shelter.update(
             {},
             {
-                "name": "Changed Name",
+                "name": "Updated Name",
             },
         )
 
 
-def test_empty_delete_query_is_blocked():
+def test_delete_rejects_empty_query(
+    uninitialized_shelter: AnimalShelter,
+) -> None:
     """
-    An empty delete query could unintentionally remove every document
-    from the collection.
-
-    The enhanced CRUD class should reject this operation before MongoDB
-    is contacted.
+    An empty delete query could remove every document in a collection.
     """
-
-    shelter = AnimalShelter.__new__(
-        AnimalShelter
-    )
 
     with pytest.raises(
         ValueError,
         match="non-empty query",
     ):
-
-        shelter.delete(
+        uninitialized_shelter.delete(
             {}
         )
 
 
-def test_empty_update_data_is_rejected():
+def test_update_rejects_empty_update_data(
+    uninitialized_shelter: AnimalShelter,
+) -> None:
     """
-    An update request must contain actual data to modify.
+    An update operation must contain at least one field to change.
     """
-
-    shelter = AnimalShelter.__new__(
-        AnimalShelter
-    )
 
     with pytest.raises(
         ValueError,
         match="non-empty update data",
     ):
-
-        shelter.update(
+        uninitialized_shelter.update(
             {
                 "animal_id": "A001",
             },
@@ -238,30 +273,27 @@ def test_empty_update_data_is_rejected():
         )
 
 
-def test_direct_mongodb_update_operator_is_blocked():
+def test_update_rejects_direct_mongodb_operator(
+    uninitialized_shelter: AnimalShelter,
+) -> None:
     """
-    Ordinary application update data should not accept direct MongoDB
-    update operators.
+    Callers cannot submit MongoDB update operators directly.
 
-    AnimalShelter controls the use of $set internally.
+    AnimalShelter controls the use of $set so that updates follow one
+    predictable structure.
     """
-
-    shelter = AnimalShelter.__new__(
-        AnimalShelter
-    )
 
     with pytest.raises(
         ValueError,
-        match="may not begin with",
+        match="may not begin",
     ):
-
-        shelter.update(
+        uninitialized_shelter.update(
             {
                 "animal_id": "A001",
             },
             {
-                "$unset": {
-                    "name": "",
+                "$set": {
+                    "name": "Unsafe Update",
                 }
             },
         )

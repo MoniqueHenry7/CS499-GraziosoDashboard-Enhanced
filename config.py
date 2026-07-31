@@ -30,7 +30,7 @@ class AppConfig:
     mongo_host: str = "127.0.0.1"
     mongo_port: int = 27017
     mongo_db: str = "aac"
-    mongo_collection: str = "animals"
+    mongo_collection: str = "animals_enhanced"
 
     # Authentication is optional for the current local development
     # environment but can be supplied through environment variables.
@@ -113,7 +113,7 @@ class AppConfig:
 
             mongo_collection=os.getenv(
                 "MONGO_COLLECTION",
-                "animals"
+                "animals_enhanced"
             ).strip(),
 
             mongo_username=username,
