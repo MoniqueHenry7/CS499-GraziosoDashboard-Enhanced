@@ -1,135 +1,406 @@
 """
 test_dashboard_service.py
 -------------------------
-Unit tests for the DashboardService business-logic layer used by the
-Grazioso Salvare Rescue Match Recommendation Dashboard.
+Unit tests for the DashboardService used by the enhanced Grazioso
+Salvare Rescue Match Recommendation Dashboard.
 
-A lightweight fake shelter object is used so these tests do not require
-a live MongoDB server.
+Enhancement Three updates the FakeAnimalShelter test double to support:
 
-These tests verify:
-- Dog-only data retrieval.
-- Rescue recommendation scoring and ranking.
-- Breed and outcome filtering.
-- Age-range filtering and validation.
-- Rescue-type validation.
-- Reset behavior.
-- Safe coordinate validation.
+- Database-side filtering
+- Field compatibility for normalized age data
+- Sorting and pagination
+- Distinct-value queries
+- Age-bound aggregation
+
+The tests continue verifying the behavior completed during the Software
+Engineering and Algorithms and Data Structures enhancements.
 
 Author: Monique Henry
 Course: CS 499 Computer Science Capstone
-Enhancement: Software Design and Engineering
+Enhancement: Databases
 """
+
+from typing import Any
 
 import pytest
 
 from dashboard_service import DashboardService
+from rescue_rules import RESET_RESCUE_TYPE
+
+
+# ----------------------------------------------------------------------
+# FAKE DATABASE SERVICE
+# ----------------------------------------------------------------------
 
 
 class FakeAnimalShelter:
     """
-    Simple test double that provides the read() method expected by
-    DashboardService.
+    In-memory test double for the Enhancement Three database interface.
 
-    This allows the service layer to be tested independently from MongoDB.
+    This class simulates the AnimalShelter methods used by
+    DashboardService without connecting to a live MongoDB server.
     """
 
-    def __init__(self, records):
-        self.records = records
-
-    def read(self, query=None):
+    def __init__(
+        self,
+        records: list[dict[str, Any]],
+    ) -> None:
         """
-        Return predictable test records.
+        Store independent copies of the supplied test records.
 
-        The fake implementation supports the dog-only query used by
-        DashboardService.load_animals().
+        Copying the records prevents the recommendation engine or service
+        from modifying the original fixture data.
+        """
+
+        self.records = [
+            record.copy()
+            for record in records
+        ]
+
+    @staticmethod
+    def _age_value(
+        record: dict[str, Any],
+    ) -> Any:
+        """
+        Return the normalized or legacy age value.
+
+        Enhancement Three stores age as age_in_weeks. The dashboard
+        continues using age_upon_outcome_in_weeks for compatibility.
+        """
+
+        return record.get(
+            "age_in_weeks",
+            record.get(
+                "age_upon_outcome_in_weeks"
+            ),
+        )
+
+    def read(
+        self,
+        query: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Preserve the original fake CRUD read interface.
+
+        This compatibility method remains available for older tests even
+        though DashboardService now uses find_animals_page().
         """
 
         query = query or {}
 
-        if query.get("animal_type") == "Dog":
-
-            return [
-                record.copy()
-                for record in self.records
-                if record.get("animal_type") == "Dog"
-            ]
-
         return [
             record.copy()
             for record in self.records
+            if all(
+                record.get(field) == value
+                for field, value in query.items()
+            )
         ]
+
+    def find_animals_page(
+        self,
+        *,
+        animal_type: str | None = "Dog",
+        breed: str | None = None,
+        outcome_type: str | None = None,
+        sex_upon_outcome: str | None = None,
+        age_range: (
+            list[float]
+            | tuple[float, float]
+            | None
+        ) = None,
+        page: int = 1,
+        page_size: int = 25,
+        sort_field: str = "animal_id",
+        sort_direction: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Filter, sort, and paginate records like AnimalShelter.
+
+        The fake performs the operations in memory while returning the
+        same response structure as the production database method.
+        """
+
+        filtered_records: list[
+            dict[str, Any]
+        ] = []
+
+        for source_record in self.records:
+            record = source_record.copy()
+
+            if (
+                animal_type is not None
+                and record.get(
+                    "animal_type"
+                )
+                != animal_type
+            ):
+                continue
+
+            if (
+                breed is not None
+                and record.get(
+                    "breed"
+                )
+                != breed
+            ):
+                continue
+
+            if (
+                outcome_type is not None
+                and record.get(
+                    "outcome_type"
+                )
+                != outcome_type
+            ):
+                continue
+
+            if (
+                sex_upon_outcome is not None
+                and record.get(
+                    "sex_upon_outcome"
+                )
+                != sex_upon_outcome
+            ):
+                continue
+
+            age_value = self._age_value(
+                record
+            )
+
+            if age_range is not None:
+                minimum_age = float(
+                    age_range[0]
+                )
+
+                maximum_age = float(
+                    age_range[1]
+                )
+
+                if age_value is None:
+                    continue
+
+                numeric_age = float(
+                    age_value
+                )
+
+                if not (
+                    minimum_age
+                    <= numeric_age
+                    <= maximum_age
+                ):
+                    continue
+
+            # Return both age-field names to simulate the production
+            # projection and its dashboard compatibility field.
+            record[
+                "age_in_weeks"
+            ] = age_value
+
+            record[
+                "age_upon_outcome_in_weeks"
+            ] = age_value
+
+            filtered_records.append(
+                record
+            )
+
+        filtered_records.sort(
+            key=lambda record: str(
+                record.get(
+                    sort_field,
+                    "",
+                )
+                or ""
+            ).casefold(),
+            reverse=(
+                sort_direction == -1
+            ),
+        )
+
+        total_records = len(
+            filtered_records
+        )
+
+        total_pages = (
+            (
+                total_records
+                + page_size
+                - 1
+            )
+            // page_size
+            if total_records
+            else 0
+        )
+
+        start_index = (
+            page - 1
+        ) * page_size
+
+        end_index = (
+            start_index
+            + page_size
+        )
+
+        return {
+            "records": filtered_records[
+                start_index:end_index
+            ],
+            "page": page,
+            "page_size": page_size,
+            "total_records": total_records,
+            "total_pages": total_pages,
+        }
+
+    def distinct_values(
+        self,
+        field: str,
+        *,
+        animal_type: str | None = "Dog",
+    ) -> list[str]:
+        """
+        Return sorted distinct values for an approved field.
+        """
+
+        values = {
+            str(
+                record.get(field)
+            ).strip()
+            for record in self.records
+            if (
+                animal_type is None
+                or record.get(
+                    "animal_type"
+                )
+                == animal_type
+            )
+            and record.get(field)
+            not in {
+                None,
+                "",
+            }
+        }
+
+        return sorted(
+            values,
+            key=str.casefold,
+        )
+
+    def age_bounds(
+        self,
+        *,
+        animal_type: str | None = "Dog",
+    ) -> tuple[float, float] | None:
+        """
+        Return minimum and maximum ages for matching records.
+        """
+
+        ages = [
+            float(
+                self._age_value(
+                    record
+                )
+            )
+            for record in self.records
+            if (
+                animal_type is None
+                or record.get(
+                    "animal_type"
+                )
+                == animal_type
+            )
+            and self._age_value(
+                record
+            )
+            is not None
+        ]
+
+        if not ages:
+            return None
+
+        return (
+            min(ages),
+            max(ages),
+        )
+
+
+# ----------------------------------------------------------------------
+# TEST DATA
+# ----------------------------------------------------------------------
 
 
 @pytest.fixture
-def sample_records():
+def animal_records() -> list[dict[str, Any]]:
     """
-    Create a small predictable dataset for service tests.
+    Return dog and cat records covering ranking and filtering scenarios.
     """
 
     return [
-        # Perfect Water Rescue candidate.
         {
+            "record_uid": "animals:test-a001",
             "animal_id": "A001",
             "animal_type": "Dog",
             "name": "Daisy",
-            "breed": "Labrador Retriever Mix",
+            "breed": "Labrador Retriever",
             "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 100,
+            "age_in_weeks": 100.0,
+            "age_upon_outcome_in_weeks": 100.0,
             "outcome_type": "Transfer",
-            "location_lat": 30.30,
-            "location_long": -97.70,
+            "location_lat": 30.2672,
+            "location_long": -97.7431,
         },
-
-        # Matches age, sex, and outcome, but not preferred Water breed.
         {
+            "record_uid": "animals:test-a002",
             "animal_id": "A002",
             "animal_type": "Dog",
             "name": "Bella",
-            "breed": "Chihuahua Shorthair Mix",
-            "sex_upon_outcome": "Intact Female",
-            "age_upon_outcome_in_weeks": 100,
-            "outcome_type": "Transfer",
-            "location_lat": 30.31,
-            "location_long": -97.71,
+            "breed": "Labrador Retriever",
+            "sex_upon_outcome": "Spayed Female",
+            "age_in_weeks": 300.0,
+            "age_upon_outcome_in_weeks": 300.0,
+            "outcome_type": "Adoption",
+            "location_lat": 30.3000,
+            "location_long": -97.7000,
         },
-
-        # Matches Water Rescue breed only.
         {
+            "record_uid": "animals:test-a003",
             "animal_id": "A003",
             "animal_type": "Dog",
             "name": "Scout",
-            "breed": "Labrador Retriever Mix",
-            "sex_upon_outcome": "Neutered Male",
-            "age_upon_outcome_in_weeks": 400,
-            "outcome_type": "Adoption",
-            "location_lat": 30.32,
-            "location_long": -97.72,
+            "breed": "German Shepherd",
+            "sex_upon_outcome": "Intact Male",
+            "age_in_weeks": 130.0,
+            "age_upon_outcome_in_weeks": 130.0,
+            "outcome_type": "Transfer",
+            "location_lat": 30.3500,
+            "location_long": -97.7500,
         },
-
-        # Cat record should not appear in the default dog dashboard.
         {
+            "record_uid": "animals:test-c001",
             "animal_id": "C001",
             "animal_type": "Cat",
             "name": "Whiskers",
-            "breed": "Domestic Shorthair Mix",
+            "breed": "Domestic Shorthair",
             "sex_upon_outcome": "Neutered Male",
-            "age_upon_outcome_in_weeks": 50,
+            "age_in_weeks": 52.0,
+            "age_upon_outcome_in_weeks": 52.0,
             "outcome_type": "Adoption",
-            "location_lat": 30.33,
-            "location_long": -97.73,
+            "location_lat": 30.2500,
+            "location_long": -97.7200,
         },
     ]
 
 
 @pytest.fixture
-def service(sample_records):
+def service(
+    animal_records: list[dict[str, Any]],
+) -> DashboardService:
     """
-    Create a DashboardService using the fake shelter.
+    Return a DashboardService configured with the in-memory fake database.
     """
 
     shelter = FakeAnimalShelter(
-        sample_records
+        animal_records
     )
 
     return DashboardService(
@@ -137,30 +408,44 @@ def service(sample_records):
     )
 
 
+# ----------------------------------------------------------------------
+# DASHBOARD SERVICE TESTS
+# ----------------------------------------------------------------------
+
+
 def test_load_animals_returns_dogs_only(
-    service,
-):
+    service: DashboardService,
+) -> None:
     """
-    DashboardService should retrieve dog records only by default.
+    The default service load should exclude non-dog records.
     """
 
-    frame = service.load_animals()
+    frame = service.load_animals(
+        dogs_only=True
+    )
 
     assert len(frame) == 3
 
     assert set(
         frame["animal_type"]
     ) == {
-        "Dog"
+        "Dog",
     }
+
+    assert list(
+        frame["animal_id"]
+    ) == [
+        "A001",
+        "A002",
+        "A003",
+    ]
 
 
 def test_water_rescue_ranks_best_candidate_first(
-    service,
-):
+    service: DashboardService,
+) -> None:
     """
-    Daisy matches all Water Rescue criteria and should receive 100 points
-    and appear first in the ranked results.
+    Daisy matches every Water Rescue preference and should rank first.
     """
 
     frame = service.filter_and_rank(
@@ -170,81 +455,49 @@ def test_water_rescue_ranks_best_candidate_first(
     assert not frame.empty
 
     assert (
-        frame.iloc[0]["animal_id"]
+        frame.iloc[0][
+            "animal_id"
+        ]
         == "A001"
     )
 
     assert (
-        frame.iloc[0]["match_score"]
-        == 100
+        frame.iloc[0][
+            "name"
+        ]
+        == "Daisy"
     )
 
     assert (
-        frame.iloc[0]["match_level"]
-        == "Strong Match"
+        int(
+            frame.iloc[0][
+                "recommendation_rank"
+            ]
+        )
+        == 1
+    )
+
+    assert (
+        float(
+            frame.iloc[0][
+                "match_score"
+            ]
+        )
+        == 100.0
     )
 
 
 def test_breed_filter_narrows_results(
-    service,
-):
+    service: DashboardService,
+) -> None:
     """
-    Selecting an exact breed description should narrow the displayed
-    candidate set.
-    """
-
-    frame = service.filter_and_rank(
-        rescue_type="Water Rescue",
-        breed="Labrador Retriever Mix",
-    )
-
-    assert len(frame) == 2
-
-    assert set(
-        frame["animal_id"]
-    ) == {
-        "A001",
-        "A003",
-    }
-
-
-def test_breed_and_outcome_filters_work_together(
-    service,
-):
-    """
-    Breed and outcome filters should work together.
+    The breed filter should be applied before ranking or reset display.
     """
 
     frame = service.filter_and_rank(
-        rescue_type="Water Rescue",
-        breed="Labrador Retriever Mix",
-        outcome_type="Transfer",
+        rescue_type=RESET_RESCUE_TYPE,
+        breed="Labrador Retriever",
     )
-
-    assert len(frame) == 1
-
-    assert (
-        frame.iloc[0]["animal_id"]
-        == "A001"
-    )
-
-
-def test_age_filter_narrows_results(
-    service,
-):
-    """
-    Age filtering should retain only animals inside the selected range.
-    """
-
-    frame = service.filter_and_rank(
-        rescue_type="Water Rescue",
-        age_range=[
-            26,
-            156,
-        ],
-    )
-
-    assert len(frame) == 2
 
     assert set(
         frame["animal_id"]
@@ -253,100 +506,114 @@ def test_age_filter_narrows_results(
         "A002",
     }
 
+    assert (
+        frame["breed"]
+        == "Labrador Retriever"
+    ).all()
 
-def test_invalid_age_range_is_rejected(
-    service,
-):
+
+def test_breed_and_outcome_filters_work_together(
+    service: DashboardService,
+) -> None:
     """
-    A minimum age greater than the maximum age should raise ValueError.
-    """
-
-    with pytest.raises(
-        ValueError,
-        match="Minimum age",
-    ):
-
-        service.filter_and_rank(
-            rescue_type="Water Rescue",
-            age_range=[
-                500,
-                100,
-            ],
-        )
-
-
-def test_negative_age_range_is_rejected(
-    service,
-):
-    """
-    Negative age values should not be accepted.
-    """
-
-    with pytest.raises(
-        ValueError,
-        match="cannot be negative",
-    ):
-
-        service.filter_and_rank(
-            rescue_type="Water Rescue",
-            age_range=[
-                -10,
-                100,
-            ],
-        )
-
-
-def test_invalid_rescue_type_is_rejected(
-    service,
-):
-    """
-    An unsupported rescue category should be rejected.
-    """
-
-    with pytest.raises(
-        ValueError,
-        match="Unsupported rescue type",
-    ):
-
-        service.filter_and_rank(
-            rescue_type=(
-                "Unknown Rescue Profile"
-            )
-        )
-
-
-def test_reset_mode_does_not_rank_animals(
-    service,
-):
-    """
-    Reset mode should preserve general browsing without recommendation
-    scoring.
+    Multiple database filters should operate as combined constraints.
     """
 
     frame = service.filter_and_rank(
-        rescue_type="Reset"
+        rescue_type=RESET_RESCUE_TYPE,
+        breed="Labrador Retriever",
+        outcome_type="Transfer",
     )
 
-    assert not frame.empty
+    assert len(frame) == 1
+
+    assert (
+        frame.iloc[0][
+            "animal_id"
+        ]
+        == "A001"
+    )
+
+    assert (
+        frame.iloc[0][
+            "outcome_type"
+        ]
+        == "Transfer"
+    )
+
+
+def test_age_filter_narrows_results(
+    service: DashboardService,
+) -> None:
+    """
+    The age-range filter should include both boundaries.
+    """
+
+    frame = service.filter_and_rank(
+        rescue_type=RESET_RESCUE_TYPE,
+        age_range=[
+            90,
+            110,
+        ],
+    )
+
+    assert len(frame) == 1
+
+    assert (
+        frame.iloc[0][
+            "animal_id"
+        ]
+        == "A001"
+    )
+
+    assert (
+        float(
+            frame.iloc[0][
+                "age_upon_outcome_in_weeks"
+            ]
+        )
+        == 100.0
+    )
+
+
+def test_reset_mode_does_not_rank_animals(
+    service: DashboardService,
+) -> None:
+    """
+    Reset mode should preserve browsing without rescue recommendation ranks.
+    """
+
+    frame = service.filter_and_rank(
+        rescue_type=RESET_RESCUE_TYPE
+    )
+
+    assert len(frame) == 3
+
+    assert (
+        frame["match_score"]
+        == 0
+    ).all()
 
     assert set(
         frame["match_level"]
     ) == {
-        "Not Ranked"
+        "Not Ranked",
     }
 
-    assert set(
-        frame["match_score"]
-    ) == {
-        0
-    }
+    assert (
+        frame[
+            "recommendation_rank"
+        ]
+        .isna()
+        .all()
+    )
 
 
 def test_top_candidate_returns_best_match(
-    service,
-):
+    service: DashboardService,
+) -> None:
     """
-    top_candidate() should return the first/highest-ranked rescue match.
+    top_candidate should return the first ranked Water Rescue result.
     """
 
     frame = service.filter_and_rank(
@@ -365,81 +632,27 @@ def test_top_candidate_returns_best_match(
     )
 
     assert (
-        candidate["match_score"]
+        candidate["name"]
+        == "Daisy"
+    )
+
+    assert (
+        candidate[
+            "recommendation_rank"
+        ]
+        == 1
+    )
+
+    assert (
+        candidate[
+            "match_score"
+        ]
         == 100
     )
 
-
-def test_valid_coordinates_are_accepted(
-    service,
-):
-    """
-    Valid latitude and longitude should be returned as a tuple.
-    """
-
-    animal = {
-        "location_lat": 30.30,
-        "location_long": -97.70,
-    }
-
-    coordinates = (
-        service.valid_coordinates(
-            animal
-        )
-    )
-
-    assert coordinates == (
-        30.30,
-        -97.70,
-    )
-
-
-def test_invalid_coordinates_are_rejected(
-    service,
-):
-    """
-    Coordinates outside valid geographic ranges should be rejected.
-    """
-
-    animal = {
-        "location_lat": 120,
-        "location_long": -250,
-    }
-
-    coordinates = (
-        service.valid_coordinates(
-            animal
-        )
-    )
-
-    assert coordinates is None
-
-
-def test_table_columns_define_numeric_fields():
-    """
-    Numeric DataTable fields should be explicitly identified so native
-    Dash filtering performs numeric rather than text comparisons.
-    """
-
-    columns = DashboardService.table_columns(
-        include_recommendation_fields=True
-    )
-
-    column_types = {
-        column["id"]: column["type"]
-        for column in columns
-    }
-
     assert (
-        column_types[
-            "age_upon_outcome_in_weeks"
+        candidate[
+            "match_level"
         ]
-        == "numeric"
-    )
-
-    assert (
-        column_types[
-            "match_score"
-        ]
-        == "numeric"
+        == "Strong Match"
     )

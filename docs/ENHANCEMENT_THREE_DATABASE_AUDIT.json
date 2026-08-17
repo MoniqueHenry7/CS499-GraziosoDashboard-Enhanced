@@ -1,0 +1,13 @@
+{
+  "total_records": 10000,
+  "dog_records": 5589,
+  "distinct_animal_ids": 9860,
+  "duplicate_animal_id_values": 138,
+  "missing_animal_ids": 0,
+  "missing_names": 3044,
+  "missing_outcome_types": 2,
+  "missing_age_values": 0,
+  "negative_age_values": 1,
+  "missing_latitude": 0,
+  "missing_longitude": 0
+}

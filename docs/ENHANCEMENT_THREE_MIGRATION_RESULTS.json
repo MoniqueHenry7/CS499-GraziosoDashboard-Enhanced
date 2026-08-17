@@ -1,0 +1,51 @@
+{
+  "migration_results": {
+    "source_collection": "animals",
+    "target_collection": "animals_enhanced",
+    "source_count_before": 10000,
+    "records_processed": 10000,
+    "valid_records": 10000,
+    "skipped_records": 0,
+    "negative_or_invalid_ages_normalized": 1,
+    "missing_names_preserved_as_null": 3044,
+    "missing_outcomes_preserved_as_null": 2,
+    "matched_records": 0,
+    "modified_records": 0,
+    "upserted_records": 10000,
+    "migration_errors": [],
+    "source_count_after": 10000,
+    "target_count_after": 10000,
+    "success": true
+  },
+  "migration_validation": {
+    "enhanced_record_count": 10000,
+    "distinct_record_uids": 10000,
+    "negative_age_values": 0,
+    "missing_record_uids": 0,
+    "missing_animal_ids": 0,
+    "missing_breeds": 0
+  },
+  "latest_audit_entry": {
+    "record_uid": null,
+    "source_record_id": null,
+    "action": "migration",
+    "timestamp": "2026-07-31T17:20:02.762000",
+    "changed_fields": [
+      "record_uid",
+      "age_in_weeks",
+      "outcome_date",
+      "date_of_birth",
+      "location_lat",
+      "location_long"
+    ],
+    "performed_by": "database_migration.py",
+    "success": true,
+    "error_message": null,
+    "details": {
+      "source_count": 10000,
+      "target_count": 10000,
+      "valid_records": 10000,
+      "skipped_records": 0
+    }
+  }
+}

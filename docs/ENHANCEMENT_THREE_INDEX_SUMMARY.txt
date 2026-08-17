@@ -1,0 +1,66 @@
+ENHANCEMENT THREE DATABASE INDEX EVALUATION
+===========================================
+
+Collection:
+animals_enhanced
+
+Total enhanced records:
+10000
+
+QUERY ONE: DOG BREED AND AGE
+----------------------------
+Selected breed:
+Pit Bull Mix
+
+Before indexing:
+Plan stages: COLLSCAN, PROJECTION_SIMPLE
+Records returned: 467
+Documents examined: 10000
+Keys examined: 0
+Execution time: 18 ms
+
+After indexing:
+Plan stages: FETCH, IXSCAN, PROJECTION_SIMPLE
+Records returned: 467
+Documents examined: 467
+Keys examined: 467
+Execution time: 12 ms
+Winning index: idx_type_breed_age
+
+QUERY TWO: DOG OUTCOME AND AGE
+------------------------------
+Selected outcome:
+Transfer
+
+Before indexing:
+Plan stages: COLLSCAN, PROJECTION_SIMPLE
+Records returned: 748
+Documents examined: 10000
+Keys examined: 0
+Execution time: 10 ms
+
+After indexing:
+Plan stages: FETCH, IXSCAN, PROJECTION_SIMPLE
+Records returned: 748
+Documents examined: 748
+Keys examined: 748
+Execution time: 3 ms
+Winning index: idx_type_outcome_age
+
+INTERPRETATION
+--------------
+Both indexed queries returned the same logical records as their
+unindexed versions.
+
+The breed-and-age query reduced documents examined from
+10000 to
+467.
+
+The outcome-and-age query reduced documents examined from
+10000 to
+748.
+
+The compound indexes improve repeated dashboard searches but require
+additional storage and index-maintenance work during create, update,
+and delete operations. This trade-off is appropriate because the
+dashboard performs frequent searches and relatively infrequent writes.
